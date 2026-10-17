@@ -1,19 +1,19 @@
-// Требование ТЗ §6.2: Application ID Discord должен быть зафиксирован одним
-// параметром конфигурации. Он задаётся переменной окружения
-// DISCORD_APPLICATION_ID (не секрет); в debug-сборке отсутствие даёт
-// предупреждение, в release — понятную ошибку сборки.
+// ТЗ §6.2: Application ID Discord не является секретом, но должен быть
+// передан в компилируемый код. Значение берём из переменной окружения
+// DISCORD_APPLICATION_ID (или .env); в debug-сборке предупреждаем о её
+// отсутствии, в release — сборка падает с понятной ошибкой.
 //
-// Плюс поддержка `.env`: пользователю удобно держать ID в корне проекта.
-// Cargo и tauri CLI сами не читают `.env`, поэтому парсим его здесь.
-// Приоритет — как у dotenv-подобья: уже заданная переменная окружения
-// всегда сильнее значения из файла.
+// Читаем `.env`: разработчик задаёт ID в корне проекта.
+// Cargo и tauri CLI сами не читают `.env`, поэтому делаем это вручную.
+// Реализация — простой dotenv-парсер: строки `KEY=VALUE`, комментарии
+// и кавычки обрезаются.
 
 use std::path::Path;
 use std::process::exit;
 
-/// Считать `KEY=VALUE` из простого `.env`-файла (без кавычек/экспортов).
-/// Возвращает найденные пары; невалидные строки пропускаем молча —
-/// файл не источник ошибок сборки.
+/// Разбор `KEY=VALUE` из простого `.env`-файла (без вложенных кавычек/эскейпов).
+/// Пустые строки и комментарии игнорируются; значения в кавычках очищаются
+/// от них, как это делает dotenv-парсер.
 fn parse_env_file(path: &Path) -> Vec<(String, String)> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Vec::new();
@@ -29,7 +29,7 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
             let (key, value) = line.split_once('=')?;
             let key = key.trim();
             let mut value = value.trim();
-            // Снимаем одну пару кавычек, если пользователь взял значение в них.
+            // Убираем парные обрамляющие кавычки, как это делает dotenv-парсер.
             if value.len() >= 2
                 && ((value.starts_with('"') && value.ends_with('"'))
                     || (value.starts_with('\'') && value.ends_with('\'')))
@@ -49,11 +49,11 @@ fn main() {
         .map(|profile| profile == "release")
         .unwrap_or(false);
 
-    // .env ищем рядом со сборкой (src-tauri) и в корне проекта.
+    // .env ищем в текущем каталоге (src-tauri) и в корне проекта.
     let candidates = [Path::new(".env"), Path::new("../.env")];
     let mut file_id: Option<String> = None;
     for candidate in candidates {
-        if Path::new(&candidate).exists() && file_id.is_none() {
+        if candidate.exists() && file_id.is_none() {
             file_id = parse_env_file(candidate)
                 .into_iter()
                 .find(|(key, _)| key == "DISCORD_APPLICATION_ID")
@@ -61,7 +61,7 @@ fn main() {
         }
     }
 
-    // Окружение сильнее файла (стандартная семантика dotenv).
+    // Переменная окружения имеет приоритет (как у большинства dotenv).
     let id = std::env::var("DISCORD_APPLICATION_ID")
         .ok()
         .filter(|id| !id.trim().is_empty())
@@ -70,23 +70,23 @@ fn main() {
 
     match id {
         Some(id) if !id.trim().is_empty() => {
-            // Пробрасываем значение в код как env-константу (option_env! в src).
+            // Экспортируем значение в набор env-переменных (option_env! в src).
             println!("cargo:rustc-env=DISCORD_APPLICATION_ID={}", id.trim());
         }
         _ => {
             if is_release {
                 println!(
                     "\n\nDISCORD_APPLICATION_ID не задан.\n\
-                     Задайте переменную окружения или добавьте её в `.env`:\
-                     \x20   $env:DISCORD_APPLICATION_ID=\"123456789012345678\"\
-                     \x20   cargo tauri build\
-                     Application ID создаётся в Discord Developer Portal (доступен всем).\n"
+                     Создайте файл `.env` в корне проекта или задайте переменную окружения:\n\
+                     \x20   $env:DISCORD_APPLICATION_ID=\"123456789012345678\"\n\
+                     \x20   cargo tauri build\n\
+                     Application ID берётся из Discord Developer Portal (это не секрет).\n"
                 );
                 exit(1);
             }
             println!(
-                "cargo:warning=DISCORD_APPLICATION_ID не задан: публикация Presence \
-                 в debug-сборке будет возвращать ошибку конфигурации"
+                "cargo:warning=DISCORD_APPLICATION_ID не задан: Rich Presence \
+                 в debug-сборке будет не публиковаться (сборка продолжится)"
             );
         }
     }

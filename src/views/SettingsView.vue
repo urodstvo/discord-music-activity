@@ -60,7 +60,7 @@ const TOGGLES: ToggleRow[] = [
   {
     key: "diagnosticsEnabled",
     title: "Расширенная диагностика",
-    hint: "Подробные технические логи. Секреты не логируются никогда.",
+    hint: "Подробные технические логи (debug). Применяется сразу. Секреты не логируются никогда.",
     testid: "toggle-diagnostics",
   },
 ];

@@ -8,7 +8,6 @@ pub const ACTIVITY_LISTENING: u8 = 2;
 
 /// Ограничения полей Discord RPC (безопасные пределы, ТЗ §6.3).
 pub const MAX_FIELD_LEN: usize = 128;
-pub const MAX_BUTTON_LABEL_LEN: usize = 31;
 
 /// Кнопка «Открыть в Яндекс Музыке» (единственная кнопка в MVP).
 pub const OPEN_IN_YANDEX_LABEL: &str = "Открыть в Яндекс Музыке";

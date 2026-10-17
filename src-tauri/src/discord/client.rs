@@ -124,12 +124,6 @@ impl DiscordRpc {
         Ok(())
     }
 
-    /// Переподключение (crate поддерживает reconnect).
-    pub fn reconnect(&mut self) -> Result<()> {
-        self.client.reconnect().map_err(from_ipc_error)?;
-        Ok(())
-    }
-
     /// Закрыть соединение (ТЗ §6.1: при выходе приложения clean close).
     pub fn close(&mut self) {
         let _ = self.client.close();

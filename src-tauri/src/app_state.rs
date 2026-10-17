@@ -130,7 +130,7 @@ impl AppSharedState {
     /// (вызывается один раз при старте приложения). Иначе фронтенд до
     /// первого статуса Ynison всегда показывает карточку «введите токен» —
     /// из-за этого токен приходилось вводить заново при каждом запуске.
-    pub fn init_auth_required(&self, present: bool) {
+    pub fn set_token_present(&self, present: bool) {
         let mut snap = self.snapshot.write().expect("snapshot доступен");
         snap.auth_required = !present;
     }
@@ -183,13 +183,11 @@ impl AppSharedState {
     pub fn push_playback(&self, playback: Option<PlaybackState>, app: &AppHandle) {
         {
             let mut snap = self.snapshot.write().expect("snapshot доступен");
-            snap.playback = playback;
+            snap.playback = playback.clone();
         }
         self.publish_snapshot(app);
-        let playback = self.snapshot.read().expect("snapshot доступен").playback.clone();
         let _ = app.emit("playback-changed", &playback);
     }
-
     /// Безопасное уведомление уровня info/warning/error (§10.2).
     pub fn notify(&self, app: &AppHandle, level: &str, message: &str) {
         let _ = app.emit(

@@ -146,7 +146,7 @@ impl Coordinator {
     }
 
     /// Желаемое Activity в данный момент.
-    fn desired_activity(&self, _shared: &AppSharedState, now: Instant) -> Option<DiscordActivity> {
+    fn desired_activity(&self, now: Instant) -> Option<DiscordActivity> {
         let settings = &self.last_settings;
         if !settings.presence_enabled {
             return None;
@@ -154,17 +154,16 @@ impl Coordinator {
 
         let grace = GracePolicy::standard();
         match self.current.as_ref() {
-            Some(playback) => {
-                match playback.status {
-                    PlaybackStatus::Playing => map_presence(playback, settings, SystemTime::now()),
-                    PlaybackStatus::Paused | PlaybackStatus::Unknown => {
-                        map_presence(playback, settings, SystemTime::now())
-                    }
-                    PlaybackStatus::Stopped => None,
-                }
-            }
+            Some(playback) => match playback.status {
+                // Маппер сам решает, публиковать ли Paused/Unknown
+                // (настройка show_paused_tracks) и что делать со Stopped.
+                PlaybackStatus::Playing
+                | PlaybackStatus::Paused
+                | PlaybackStatus::Unknown => map_presence(playback, settings, SystemTime::now()),
+                PlaybackStatus::Stopped => None,
+            },
             None => {
-                // Нет актуальногопіtablet трека от Ynison: grace держит последнюю
+                // Нет актуального трека от Ynison: grace держит последнюю
                 // активность, затем пусто (ТЗ §6.6).
                 if grace.is_stale(self.last_valid_at, now) {
                     None
@@ -185,7 +184,9 @@ impl Coordinator {
         app: &AppHandle,
     ) {
         // Выключенный Presence: очистка сразу, следующий шаг — не публиковать.
-        if !shared.settings().presence_enabled {
+        // last_settings уже обновлён из shared в начале тика — читаем его,
+        // не дублируя RwLock-read.
+        if !self.last_settings.presence_enabled {
             if self.published.is_some() {
                 self.published = None;
                 self.pending = Some(Pending::Clear);
@@ -197,7 +198,7 @@ impl Coordinator {
             return;
         }
 
-        let desired = self.desired_activity(shared, now);
+        let desired = self.desired_activity(now);
 
         match (desired, self.published.clone()) {
             (None, None) => {
@@ -404,13 +405,13 @@ mod tests {
 
     #[test]
     fn desired_none_when_presence_disabled() {
-        let shared = AppSharedState::new(AppSettings::default());
+        let _shared = AppSharedState::new(AppSettings::default());
         let mut state = coordinator(AppSettings {
             presence_enabled: false,
             ..AppSettings::default()
         });
         state.current = Some(playback("1", PlaybackStatus::Playing));
-        assert!(state.desired_activity(&shared, Instant::now()).is_none());
+        assert!(state.desired_activity(Instant::now()).is_none());
     }
 
     #[test]
@@ -418,7 +419,7 @@ mod tests {
         let shared = AppSharedState::new(AppSettings::default());
         let mut state = coordinator(shared.settings());
         state.current = Some(playback("1", PlaybackStatus::Playing));
-        let desired = state.desired_activity(&shared, Instant::now()).unwrap();
+        let desired = state.desired_activity(Instant::now()).unwrap();
         assert_eq!(desired.details.as_deref(), Some("Title"));
         assert_eq!(desired.state.as_deref(), Some("Artist"));
     }
@@ -429,7 +430,7 @@ mod tests {
         let mut state = coordinator(shared.settings());
         state.current = Some(playback("1", PlaybackStatus::Stopped));
         state.published = Some(DiscordActivity::listening());
-        assert!(state.desired_activity(&shared, Instant::now()).is_none());
+        assert!(state.desired_activity(Instant::now()).is_none());
     }
 
     #[test]
@@ -441,11 +442,11 @@ mod tests {
         state.published = Some(published.clone());
         state.last_valid_at = Some(Instant::now() - Duration::from_secs(5));
         assert_eq!(
-            state.desired_activity(&shared, Instant::now()),
+            state.desired_activity(Instant::now()),
             Some(published.clone())
         );
         // Grace истёк — желаемое пусто → очистка.
         state.last_valid_at = Some(Instant::now() - Duration::from_secs(15));
-        assert!(state.desired_activity(&shared, Instant::now()).is_none());
+        assert!(state.desired_activity(Instant::now()).is_none());
     }
 }

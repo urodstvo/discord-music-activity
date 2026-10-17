@@ -34,5 +34,4 @@ pub fn update_tray(app: &AppHandle, presence_enabled: bool) {
             let _ = tray.set_menu(Some(menu));
         }
     }
-    let _ = app;
 }

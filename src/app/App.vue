@@ -10,7 +10,6 @@ import type {
   AppSettings,
   AppStateSnapshot,
   NotificationPayload,
-  PlaybackState,
 } from "../types/app";
 
 const currentTab = ref<"dashboard" | "settings" | "diagnostics">("dashboard");
@@ -28,9 +27,8 @@ onMounted(async () => {
 useTauriEvent<AppStateSnapshot>("app-state-changed", (snapshot) => {
   appStore.applySnapshot(snapshot);
 });
-useTauriEvent<PlaybackState | null>("playback-changed", () => {
-  // playback-cart: актуален через snapshot; событие помечает время.
-});
+// playback-changed не подписываем отдельно: снапшот (app-state-changed)
+// уже содержит актуальный playback, а прогресс считает usePlaybackClock.
 useTauriEvent<AppSettings>("settings-changed", (settings) => {
   appStore.applySettings(settings);
   applyTheme(settings.theme);

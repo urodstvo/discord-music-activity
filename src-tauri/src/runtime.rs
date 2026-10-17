@@ -79,8 +79,7 @@ impl Supervisor {
             }
         };
 
-        // События клиента → CoordinatorEvent → координатор.
-        let (forward_tx, mut forward_rx) = mpsc::unbounded_channel::<CoordinatorEvent>();
+        // События клиента → CoordinatorEvent → координатор (один хоп).
         let child = self.shared.shutdown.child_token();
         let receiver = spawn_ynison_client(
             token,
@@ -88,20 +87,11 @@ impl Supervisor {
             app.clone(),
             child.clone(),
         );
+        let coordinator_tx = self.coordinator_tx.clone();
         tauri::async_runtime::spawn(async move {
             let mut receiver = receiver;
             while let Some(event) = receiver.recv().await {
-                if forward_tx.send(event.into()).is_err() {
-                    break;
-                }
-            }
-        });
-
-        // Forward событий в координатор.
-        let coordinator_tx = self.coordinator_tx.clone();
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = forward_rx.recv().await {
-                if coordinator_tx.send(event).is_err() {
+                if coordinator_tx.send(event.into()).is_err() {
                     break;
                 }
             }

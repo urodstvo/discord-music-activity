@@ -45,9 +45,11 @@ pub fn rand_between(max: u64) -> u64 {
 
 /// Построить и запустить приложение.
 pub fn run() {
-    let _log_guard = logging::init();
-
     let settings = load_settings(&settings_path());
+    // Логгинг инициализируем ПОСЛЕ чтения настроек: diagnosticsEnabled
+    // задаёт подробность (debug) собственного кода.
+    let _log_guard = logging::init(settings.diagnostics_enabled);
+
     let shared = Arc::new(AppSharedState::new(settings.clone()));
 
     tauri::Builder::default()
@@ -55,6 +57,7 @@ pub fn run() {
             // ТЗ §9.5: повторный запуск — показать окно существующего
             // экземпляра, не создавая второй процесс.
             if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }
@@ -99,6 +102,7 @@ pub fn run() {
                     match event.id().as_ref() {
                         tray::MENU_OPEN => {
                             if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();
                             }
@@ -125,12 +129,12 @@ pub fn run() {
             // хранилище — подключаемся при старте, не дожидаясь ввода заново.
             match auth::load_token() {
                 Ok(Some(_)) => {
-                    shared.init_auth_required(true);
+                    shared.set_token_present(true);
                     let supervisor = app.state::<Supervisor>();
                     supervisor.start_ynison(app.handle());
                 }
                 Ok(None) => {
-                    shared.init_auth_required(false);
+                    shared.set_token_present(false);
                     // Настройка может быть включена — просто не найдём токен
                     // (start_ynison сам залогирует «тока нет»).
                     if settings.start_on_launch {
@@ -140,7 +144,7 @@ pub fn run() {
                 }
                 Err(err) => {
                     // Хранилище недоступно: сообщаем, токен считаем не заданным.
-                    shared.init_auth_required(false);
+                    shared.set_token_present(false);
                     shared.push_error(&err, app.handle());
                 }
             }
@@ -148,18 +152,34 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // ТЗ §9.5: закрытие окна при closeToTray сворачивает в трей.
-                let app = window.app_handle();
-                let close_to_tray = app.state::<Supervisor>().shared().settings().close_to_tray;
-                if close_to_tray {
-                    api.prevent_close();
-                    let _ = window.hide();
-                } else {
-                    // Явный close — как Quit: чистим задачи и Activity.
-                    let supervisor = app.state::<Supervisor>();
-                    supervisor.shutdown_all();
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // ТЗ §9.5: закрытие окна при closeToTray сворачивает в трей.
+                    let app = window.app_handle();
+                    let close_to_tray =
+                        app.state::<Supervisor>().shared().settings().close_to_tray;
+                    if close_to_tray {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    } else {
+                        // Явный close — как Quit: чистим задачи и Activity.
+                        let supervisor = app.state::<Supervisor>();
+                        supervisor.shutdown_all();
+                    }
                 }
+                // Tauri 2 не имеет события «минимизация запросена»; стандартный
+                // паттерн — Resized + is_minimized (ТЗ §9.3: «Минимизировать
+                // в трей»). При флаге минимизация превращается в сворачивание
+                // в трей: окно скрывается, процесс продолжает работать.
+                tauri::WindowEvent::Resized(_) => {
+                    let app = window.app_handle();
+                    let minimize_to_tray =
+                        app.state::<Supervisor>().shared().settings().minimize_to_tray;
+                    if minimize_to_tray && window.is_minimized().unwrap_or(false) {
+                        let _ = window.hide();
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![

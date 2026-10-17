@@ -85,7 +85,7 @@ pub fn smtc_reports_playing(title: &str) -> bool {
             if !playing {
                 continue;
             }
-        let Ok(props) = await_smtc(session.TryGetMediaPropertiesAsync()?, deadline) else {
+            let Ok(props) = await_smtc(session.TryGetMediaPropertiesAsync()?, deadline) else {
                 continue;
             };
             let session_title = props

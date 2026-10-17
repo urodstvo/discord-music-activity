@@ -1,6 +1,6 @@
 [package]
 name = "discord-music-activity"
-version = "0.1.0"
+version = "0.2.0"
 description = "Yandex Music Rich Presence for Discord"
 authors = ["urodstvo"]
 edition = "2024"
@@ -29,9 +29,9 @@ url = "2"
 keyring = { version = "4", default-features = false, features = ["v1", "windows-native-keyring-store"] }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
 tokio-util = "0.7"
-# TLS обязателен: без фичи tokio-tungstenite падает с
-# «TLS support not compiled in» на любом wss:// соединении.
-# native-tls на Windows — schannel (системный стек TLS).
+# TLS обязателен: без поддержки TLS tokio-tungstenite падает с ошибкой
+# «TLS support not compiled in» на любом wss://-соединении.
+# native-tls на Windows использует schannel (системный стек TLS).
 tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 uuid = { version = "1", features = ["v4"] }
@@ -43,9 +43,9 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "local-
 tracing-appender = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-# <!-- референс WYMR --> SMTC-коррекция ложной паузы Ynison:
-# системные «теперь играет»-сессии Windows. windows-future = IAsyncOperation
-# (WinRT async), блокирующее ожидание — вручную через Status/GetResults.
+# SMTC-сверка для коррекции ложной паузы Ynison: читает реальные
+# медиа-сессии Windows. windows-future = IAsyncOperation (WinRT async),
+# блокирующее ожидание реализовано поллингом Status/GetResults.
 windows = { version = "0.62", features = ["Foundation", "Media_Control"] }
 windows-future = "0.3"
 

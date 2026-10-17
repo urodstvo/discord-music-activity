@@ -49,6 +49,8 @@ pub struct PlaybackState {
 }
 
 impl PlaybackState {
+    /// Нейтральное состояние. Используется в тестах mapper.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn empty() -> Self {
         Self {
             status: PlaybackStatus::Unknown,
@@ -66,6 +68,8 @@ impl PlaybackState {
     }
 
     /// Состояние содержит объект трека, пригодный для отображения.
+    /// Используется в тестах mapper/модели.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn has_track(&self) -> bool {
         self.track_id.is_some() || self.title.is_some()
     }
@@ -73,9 +77,9 @@ impl PlaybackState {
 
 /// Поддержка `SystemTime` в serde через unix epoch millis.
 mod serde_system_time {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::Serializer;
 
     pub fn serialize<S>(time: &SystemTime, ser: S) -> Result<S::Ok, S::Error>
     where
@@ -85,16 +89,6 @@ mod serde_system_time {
             Ok(d) => ser.serialize_u64(d.as_millis() as u64),
             Err(_) => ser.serialize_u64(0),
         }
-    }
-
-    pub fn deserialize<'de, D>(de: D) -> Result<SystemTime, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let millis = u64::deserialize(de)?;
-        Ok(UNIX_EPOCH
-            .checked_add(Duration::from_millis(millis))
-            .unwrap_or(UNIX_EPOCH))
     }
 }
 

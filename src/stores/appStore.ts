@@ -1,7 +1,7 @@
 ﻿// Единое состояние приложения: снапшот из backend + события.
 // (ТЗ §10.2: frontend получает snapshot + события, не poll каждую секунду.)
 
-import { computed, reactive } from "vue";
+import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
@@ -40,9 +40,6 @@ const appStore = {
   get settings() {
     return state.settings;
   },
-  hasToken: computed(
-    () => state.snapshot !== null && !state.snapshot.authRequired,
-  ),
 
   async load(): Promise<void> {
     const [snapshot, settings] = await Promise.all([

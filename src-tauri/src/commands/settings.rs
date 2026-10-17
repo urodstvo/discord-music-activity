@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::config::model::AppSettings;
 use crate::config::persistence::save_settings;
+use crate::logging;
 use crate::runtime::Supervisor;
 
 /// Текущие настройки.
@@ -33,6 +34,7 @@ pub async fn update_settings(
         Err(err) => return Err(err.code.ui_text().to_string()),
     }
     supervisor.shared().update_settings(current.clone());
+    logging::set_verbose(current.diagnostics_enabled);
     crate::tray::update_tray(&app, current.presence_enabled);
     apply_autostart(&app, current.start_on_launch);
     let _ = app.emit("settings-changed", &current);
@@ -114,7 +116,6 @@ fn merge_theme(
         _ => Err(format!("{key}: ожидается system|light|dark")),
     }
 }
-
 // Применение автозапуска через tauri-plugin-autostart (ТЗ §8).
 fn apply_autostart(app: &AppHandle, enabled: bool) {
     use tauri::Manager;
@@ -137,9 +138,4 @@ fn apply_autostart(app: &AppHandle, enabled: bool) {
             tracing::warn!("autostart плагин недоступен");
         }
     }
-}
-
-#[allow(dead_code)] // сохранение autostart работает через update_settings
-fn unused_app(app: &AppHandle) {
-    let _ = app;
 }

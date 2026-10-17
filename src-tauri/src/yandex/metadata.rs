@@ -303,19 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn negative_cache_does_not_refetch() {
-        let mut cache = LruCache::new();
-        cache.put("a".to_string(), TrackMetadata::empty());
-        cache.get("a");
-        cache.put("b".to_string(), TrackMetadata::empty());
-        let mut cache = LruCache::new();
-        cache.put("a".to_string(), TrackMetadata::empty());
-        // порядок использования: a, b
-        cache.put("b".to_string(), TrackMetadata::empty());
-        let _ = cache; // вытеснение проверено в cache_is_bounded
-    }
-
-    #[test]
     fn get_reorders_lru() {
         let mut cache = LruCache::new();
         cache.put("a".to_string(), TrackMetadata::empty());

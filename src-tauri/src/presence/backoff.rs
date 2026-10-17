@@ -38,6 +38,7 @@ impl Backoff {
 
     /// Конструктор с произвольными параметрами — для тестов и нестандартных
     /// сценариев (например, быстрых retry внутри одной сессии).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn with_params(base_ms: u64, max_ms: u64) -> Self {
         Self {
             attempt: 0,
@@ -62,6 +63,7 @@ impl Backoff {
     }
 
     /// Текущее количество неудачных попыток.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn attempts(&self) -> u32 {
         self.attempt
     }

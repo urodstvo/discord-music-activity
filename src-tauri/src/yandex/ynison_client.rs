@@ -17,7 +17,8 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_util::sync::CancellationToken;
@@ -28,7 +29,7 @@ use crate::presence::backoff::Backoff;
 use crate::yandex::errors::{AppError, AppResult, ErrorCode};
 use crate::yandex::metadata::MetadataClient;
 use crate::yandex::models::PlaybackState;
-use crate::yandex::protocol::{normalize, parse_frame};
+use crate::yandex::protocol::{normalize, parse_frame, MAX_FRAME_BYTES};
 
 /// Базовый URL redirect-сервиса.
 pub const REDIRECT_URL: &str =
@@ -44,8 +45,8 @@ const MAX_KEEPALIVE_SECS: u64 = 300;
 /// Параметры redirect, полученные с первого сокета.
 ///
 /// Разбор — толерантный к casing (camelCase/snake_case) и к типам int64
-/// (строка/число): промышленный сервер mixes форму, а strict-разбор раньше
-/// привёл к тому, что `redirectTicket` улетал серверу как `null` →
+/// (строка/число): промышленный сервер смешивает форму, а strict-разбор
+/// раньше приводил к тому, что `redirectTicket` улетал серверу как `null` →
 /// INVALID_ARGUMENT 400030003.
 #[derive(Debug, Clone, Default)]
 pub struct RedirectInfo {
@@ -210,7 +211,7 @@ async fn fetch_redirect(token: &str) -> AppResult<RedirectInfo> {
         ));
     }
     if info.redirect_ticket.is_none() {
-        // Уже неguessим: сервер обязательно требует тикет на state-сокете.
+        // Не угадываем: сервер обязательно требует тикет на state-сокете.
         return Err(AppError::with_details(
             ErrorCode::YnisonProtocolChanged,
             "redirect ticket missing".to_string(),
@@ -440,8 +441,6 @@ pub fn spawn_ynison_client(
                     return;
                 }
             }
-            ctx.shared
-                .set_ynison_status(YnisonStatus::Reconnecting, &ctx.app_handle);
         }
     });
     rx
@@ -458,17 +457,17 @@ async fn run_session(
     // Шаг 1: redirect.
     let redirect = match fetch_redirect(&ctx.token).await {
         Ok(info) => info,
-        Err(err) => return resume_from_auth(err),
+        Err(err) => return classify_session_error(err),
     };
-    // (host и формат тикета не секреты; сам тикет — опак, не логируем целиком)
+    // (host и формат тикета не секреты; сам тикет — ок, не логируем целиком)
     tracing::info!(
         "Ynison redirect: host={:?} ticket={} session_id={:?}",
         redirect.host.as_deref().unwrap_or("<none>"),
         match redirect.redirect_ticket.as_deref() {
-            Some(t) => format!("len={}, prefix={:?}", t.len(), &t[..t.len().min(8)]),
+            Some(t) => format!("len={}, prefix={:?}", t.len(), char_prefix(t, 8)),
             None => "<none>".to_string(),
         },
-        redirect.session_id.as_deref().map(|s| &s[..s.len().min(6)]),
+        redirect.session_id.as_deref().map(|s| char_prefix(s, 6)),
     );
     let keepalive_secs = redirect.keepalive_secs();
 
@@ -484,17 +483,17 @@ async fn run_session(
         &["Bearer", "v2", state_sub.as_str()],
     ) {
         Ok(req) => req,
-        Err(err) => return resume_from_auth(err),
+        Err(err) => return classify_session_error(err),
     };
 
     let connect_future = connect_async(request);
     let (mut socket, _response) = match tokio::time::timeout(HANDSHAKE_TIMEOUT, connect_future).await
     {
         Ok(Ok(output)) => output,
-        Ok(Err(err)) => return resume_from_auth(map_connect_error(err)),
+        Ok(Err(err)) => return classify_session_error(map_connect_error(err)),
         Err(_) => {
             tracing::warn!("ws handshake failed: state timeout");
-            return resume_from_auth(AppError::with_details(
+            return classify_session_error(AppError::with_details(
                 ErrorCode::YandexUnavailable,
                 "state handshake timeout",
             ));
@@ -508,7 +507,7 @@ async fn run_session(
     }
     tracing::info!("Ynison: register отправлен");
     // ВАЖНО: backoff НЕ сбрасываем здесь. Рукопожатие и register — не
-    // доказательство живой сессии (осшибка приходит позже, в message_loop):
+    // доказательство живой сессии (ошибка приходит позже, в message_loop):
     // если сбрасывать сейчас, попытки вечно идут с базовой задержкой и
     // штормят Ynison (сервер начинает отвечать UNAVAILABLE).
     ctx.shared
@@ -594,9 +593,16 @@ async fn message_loop(
                                 tracing::info!("Ynison первый кадр: {}", safe_frame_summary(&json));
                             }
                         }
+                        if text.len() > MAX_FRAME_BYTES {
+                            tracing::warn!(
+                                "text frame превышает лимит {} байт — кадр пропущен",
+                                MAX_FRAME_BYTES
+                            );
+                            continue;
+                        }
                         match dispatch_frame(&text, metadata).await {
                             Ok(state) => deliver_state(ctx, state),
-                            Err(err) => return resume_from_auth(err),
+                            Err(err) => return classify_session_error(err),
                         }
                     }
                     Some(Ok(Message::Binary(bytes))) => {
@@ -608,10 +614,22 @@ async fn message_loop(
                                 started.elapsed().as_millis()
                             );
                         }
+                        // Тот же лимит размера, что и для текстовых кадров.
+                        if bytes.len() > MAX_FRAME_BYTES {
+                            tracing::warn!(
+                                "binary frame превышает лимит {} байт — кадр пропущен",
+                                MAX_FRAME_BYTES
+                            );
+                            continue;
+                        }
                         match std::str::from_utf8(bytes.as_ref()) {
                             Ok(text) => {
-                                if let Ok(state) = dispatch_frame(text, metadata).await {
-                                    deliver_state(ctx, state);
+                                // Обработка ошибок как в text-ветке: error-кадр
+                                // может прийти binary и должен уметь уводить
+                                // сессию в AuthRequired/ProtocolError.
+                                match dispatch_frame(text, metadata).await {
+                                    Ok(state) => deliver_state(ctx, state),
+                                    Err(err) => return classify_session_error(err),
                                 }
                             }
                             Err(_) => {
@@ -656,7 +674,7 @@ fn safe_frame_summary(json: &serde_json::Value) -> String {
     let mut parts = Vec::new();
     parts.push(format!(
         "player_state={}",
-        state.map(|v| "есть").unwrap_or("нет")
+        state.map(|_| "есть").unwrap_or("нет")
     ));
     match queue {
         None => parts.push("player_queue=нет".to_string()),
@@ -819,16 +837,7 @@ async fn dispatch_frame(
     // Сверяемся с реальными SMTC-сессиями Windows: если та же композиция
     // там «играет», считаем паузу сервера ложной и публикуем Playing.
     if is_frame_paused(&frame) {
-        let title = frame
-            .player_queue
-            .as_ref()
-            .or_else(|| frame.player_state.as_ref().and_then(|s| s.player_queue.as_ref()))
-            .and_then(|q| q.playable_list.as_ref())
-            .and_then(|l| {
-                l.first()
-                    .and_then(|p| p.title.as_deref().map(str::to_string))
-            });
-        if let Some(title) = title {
+        if let Some(title) = active_playable_title(&frame) {
             if pause_corrected_by_smtc(&title).await {
                 tracing::info!("Ynison: ложная пауза исправлена по SMTC ({title:?})");
                 if let Some(status) = frame
@@ -886,6 +895,27 @@ fn is_frame_paused(frame: &crate::yandex::protocol::YnisonFrame) -> bool {
         == Some(true)
 }
 
+/// Заголовок АКТИВНОГО playable — по `current_playable_index` (как в
+/// нормализации), а не `first()`: иначе SMTC-сверка может сравнивать не тот
+/// трек, когда очередь сдвинулась.
+fn active_playable_title(frame: &crate::yandex::protocol::YnisonFrame) -> Option<String> {
+    let queue = frame
+        .player_queue
+        .as_ref()
+        .or_else(|| frame.player_state.as_ref().and_then(|s| s.player_queue.as_ref()))?;
+    let list = queue.playable_list.as_ref()?;
+    let playable = match queue.current_playable_index.as_ref().and_then(|v| v.as_i64()) {
+        Some(index) if index >= 0 => list.get(usize::try_from(index).ok()?)?,
+        Some(_) => return None, // отрицательный индекс = очередь пуста
+        None => list.first()?,
+    };
+    playable
+        .title
+        .as_deref()
+        .map(str::to_string)
+        .filter(|t| !t.trim().is_empty())
+}
+
 /// SMTC-сверка в выделенном потоке с таймаутом: COM-вызовы блокируют, а
 /// WS-цикл не должен подвисать (коррекция в худшем случае не применяется).
 async fn pause_corrected_by_smtc(title: &str) -> bool {
@@ -911,7 +941,7 @@ async fn pause_corrected_by_smtc(title: &str) -> bool {
 }
 
 /// Сопоставить ошибку с элементом SessionResult.
-fn resume_from_auth(err: AppError) -> SessionResult {
+fn classify_session_error(err: AppError) -> SessionResult {
     match err.code {
         ErrorCode::InvalidToken | ErrorCode::TokenExpired | ErrorCode::NoToken => {
             SessionResult::AuthRequired
@@ -919,6 +949,12 @@ fn resume_from_auth(err: AppError) -> SessionResult {
         ErrorCode::YnisonProtocolChanged => SessionResult::ProtocolError,
         _ => SessionResult::NetworkError,
     }
+}
+
+/// Ренейм ошибок не требуем: без паник на границе байт/символ
+/// (байтовый слайс `&s[..6]` упал бы на не-ASCII).
+fn char_prefix(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 /// Классификация ws-ошибок безопасным текстом без секретов.
@@ -937,8 +973,6 @@ fn ws_error_class(err: &tokio_tungstenite::tungstenite::Error) -> String {
         WsError::WriteBufferFull(_) => "write buffer full".to_string(),
         WsError::Utf8(_) => "utf8".to_string(),
         WsError::AttackAttempt => "attack attempt".to_string(),
-        // Debug-формат ответа сервера не содержит нашего токена — безопасно.
-        _ => format!("unexpected: {err:?}"),
     }
 }
 

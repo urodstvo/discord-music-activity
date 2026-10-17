@@ -96,11 +96,6 @@ pub fn delete_token() -> AppResult<()> {
     Ok(())
 }
 
-/// Есть ли сохранённый токен (без чтения значения).
-pub fn has_token() -> bool {
-    load_token().map(|opt| opt.is_some()).unwrap_or(false)
-}
-
 fn map_store_error(_err: keyring::Error) -> AppError {
     // Никогда не включаем текст ошибки keyring целиком: он может содержать
     // частичные данные записи.
