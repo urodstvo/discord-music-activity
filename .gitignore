@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local environment (secrets-free, but belongs to the machine)
+.env

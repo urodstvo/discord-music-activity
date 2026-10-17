@@ -1,0 +1,170 @@
+/* Дизайн-токены приложения: компактный desktop UI в стиле Яндекс Музыки
+   (тёмный чёрный фон с жёлтым акцентом), светлая и тёмная темы
+   версионируются через css переменные. */
+
+:root {
+  --bg: #0d0d0f;
+  --bg-elevated: #161618;
+  --bg-input: #1f1f23;
+  --text: #f2f2f4;
+  --text-muted: #a5a1a0;
+  --accent: #ffdb4d;
+  --accent-hover: #ffcc00;
+  /* Цвет текста/иконок поверх жёлтого акцента — тёмный для контраста. */
+  --accent-contrast: #141414;
+  --success: #35c28f;
+  --warning: #d9a436;
+  --danger: #e05b5b;
+  --border: #2a2a2e;
+  --radius: 10px;
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="light"] {
+  --bg: #f7f7f5;
+  --bg-elevated: #ffffff;
+  --bg-input: #eceff1;
+  --text: #141414;
+  --text-muted: #6b6b70;
+  --accent: #ffdb4d;
+  --accent-hover: #ffcc00;
+  --accent-contrast: #141414;
+  --border: #dddde0;
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+*:where(:not(html, iframe, canvas, img, svg, video):not(svg *)) {
+  all: unset;
+  display: revert;
+}
+
+body {
+  font-family:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+.btn {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  box-sizing: border-box;
+  transition: background 0.15s ease, opacity 0.15s ease;
+  user-select: none;
+}
+
+button:hover:not(:disabled),
+.btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-input) 70%, var(--text) 30%);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+input,
+select {
+  all: unset;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+input:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+input[type="checkbox"]:focus {
+  outline: 2px solid var(--accent);
+}
+
+label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+
+.section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.row + .row {
+  border-top: 1px solid var(--border);
+}
+
+/* Управление в правой части строки не должно сжиматься: место
+   освобождает текст, а не кнопка/переключатель/селект. */
+.row > button,
+.row > .btn,
+.row > select,
+.row > label {
+  flex: none;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  /* Длинные строки (пути, ошибки, URL) не должны раздувать карточку. */
+  overflow-wrap: anywhere;
+}

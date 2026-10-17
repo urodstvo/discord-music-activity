@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "discord-music-activity",
+  "productName": "Yandex Music Presence",
   "version": "0.1.0",
   "identifier": "com.urodstvo.discord-music-activity",
   "build": {
@@ -12,13 +12,22 @@
   "app": {
     "windows": [
       {
-        "title": "discord-music-activity",
-        "width": 800,
-        "height": 600
+        "label": "main",
+        "title": "Yandex Music Presence",
+        "width": 900,
+        "height": 640,
+        "minWidth": 760,
+        "minHeight": 560,
+        "center": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "img-src": "'self' data: https://avatars.yandex.net https://avatars.mds.yandex.net",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "style-src": "'self' 'unsafe-inline'"
+      }
     }
   },
   "bundle": {

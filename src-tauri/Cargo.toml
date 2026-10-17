@@ -1,8 +1,8 @@
 [package]
 name = "discord-music-activity"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Yandex Music Rich Presence for Discord"
+authors = ["urodstvo"]
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -18,10 +18,39 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+thiserror = "2"
+url = "2"
+keyring = { version = "4", default-features = false, features = ["v1", "windows-native-keyring-store"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
+tokio-util = "0.7"
+# TLS обязателен: без фичи tokio-tungstenite падает с
+# «TLS support not compiled in» на любом wss:// соединении.
+# native-tls на Windows — schannel (системный стек TLS).
+tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+uuid = { version = "1", features = ["v4"] }
+discord-rich-presence = "1"
+reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls", "json"] }
+dirs = "6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "local-time"] }
+tracing-appender = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# <!-- референс WYMR --> SMTC-коррекция ложной паузы Ynison:
+# системные «теперь играет»-сессии Windows. windows-future = IAsyncOperation
+# (WinRT async), блокирующее ожидание — вручную через Status/GetResults.
+windows = { version = "0.62", features = ["Foundation", "Media_Control"] }
+windows-future = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
