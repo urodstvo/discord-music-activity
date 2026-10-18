@@ -323,7 +323,7 @@ fn register_message() -> String {
             "device": {
                 "info": {
                     "device_id": device_id,
-                    "title": "Yandex Music Presence",
+                    "title": "Яндекс Музыка → Discord",
                     "type": "WEB",
                     "app_name": "yandex-music",
                 },

@@ -292,6 +292,7 @@ impl Arbiter {
 }
 
 /// Supervisor: публичное управление источниками.
+#[derive(Clone)]
 pub struct Supervisor {
     shared: Arc<AppSharedState>,
     arbiter: Arc<Arbiter>,
@@ -369,12 +370,18 @@ impl Supervisor {
     }
 
     /// Токен сохранён (и уже проверен сервером) — разблокировать Ynison.
+    /// Снапшот обновляем сразу (как при старте): иначе UI до первого
+    /// `Connected` продолжает показывать «нет токена», хотя токен уже есть.
+    /// Если Ynison позже отклонит токен, статус `AuthenticationRequired`
+    /// вернёт флаг обратно.
     pub fn on_token_saved(&self, app: &tauri::AppHandle) {
         {
             let mut state = self.arbiter.state.lock().expect("арбитр доступен");
             state.token_present = true;
             state.auth_blocked = false;
         }
+        self.shared.set_token_present(true);
+        self.shared.publish_snapshot(app);
         self.arbiter.reconcile(app);
     }
 

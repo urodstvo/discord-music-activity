@@ -330,7 +330,7 @@ async function reconnectDiscord(): Promise<void> {
           >
             <option value="auto">Авто</option>
             <option value="ynison">Только Яндекс Музыка</option>
-            <option value="media_control">Только другие плееры</option>
+            <option value="media_control">Только Windows</option>
           </select>
         </div>
         <p
@@ -499,6 +499,32 @@ async function reconnectDiscord(): Promise<void> {
 .session-details summary {
   cursor: pointer;
   user-select: none;
+  /* Нативный маркер прячем: его положение от текста средствами CSS
+     не двигается — рисуем свою точку, которой можно управлять. */
+  list-style: none;
+  position: relative;
+}
+
+.session-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-details summary::marker {
+  content: "";
+}
+
+/* Своя точка висит в левом паддинге карточки (18px): текст summary
+   выровнен со строкой выше, а точка не касается рамки. */
+.session-details summary::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
 }
 
 .session-list {

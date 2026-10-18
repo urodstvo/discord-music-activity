@@ -30,6 +30,10 @@ pub enum ErrorCode {
     SettingsReadWriteError,
     /// Системное хранилище секретов недоступно.
     SecretStoreError,
+    /// Код device flow истёк — нужно начать вход заново.
+    DeviceAuthExpired,
+    /// Пользователь отклонил доступ на странице Яндекса.
+    DeviceAuthDenied,
     /// Внутренняя ошибка, не покрываемая другими классами.
     Internal,
 }
@@ -50,6 +54,8 @@ impl ErrorCode {
             ErrorCode::ArtworkUnavailable => "Обложка недоступна",
             ErrorCode::SettingsReadWriteError => "Не удалось сохранить настройки",
             ErrorCode::SecretStoreError => "Системное хранилище секретов недоступно",
+            ErrorCode::DeviceAuthExpired => "Код входа истёк — начните заново",
+            ErrorCode::DeviceAuthDenied => "Доступ отклонён на странице Яндекса",
             ErrorCode::Internal => "Внутренняя ошибка",
         }
     }

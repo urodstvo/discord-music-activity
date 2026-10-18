@@ -108,6 +108,35 @@ src-tauri/src/
   `presence::coordinator` решает *когда publish/clear в Discord* (debounce,
   rate limit, grace). Связка запускается в `lib.rs`.
 
+## ADR-009: Вход через Яндекс по Device Flow
+
+- **Статус:** принято
+- **Дата:** 2026-10-18
+
+Ручной ввод OAuth-токена (ТЗ §5.1) приводил к UX-проблемам: токен надо
+доставать из cookie/devtools, а удаление токена давало двойную плашку
+(backend `notification` + локальный тост фронтенда).
+
+Решение: OAuth Device Flow (RFC 8628, реализация Яндекса):
+
+- `yandex/device_auth.rs`: `POST /device/code` → показ `user_code` в UI,
+  фоновый опрос `POST /token` (`grant_type=device_code`) с интервалом
+  сервера и дедлайном `expires_in`. Используются публичные креды
+  официального Android-приложения Яндекс Музыки
+  (`23cabbbdc6cd418abb4b39c32c41195d` / `53bc…3300`) — те же, что встроены
+  в открытые клиенты (`MarshalX/yandex-music-api`); это не секреты
+  проекта, собственная регистрация OAuth-приложения потребовала бы
+  Client ID/Secret от каждого пользователя.
+- Команды `start_device_auth` / `cancel_device_auth`, менеджер
+  `DeviceAuthManager` (отмена предыдущей сессии при повторном старте).
+  Полученный токен проходит ту же проверку (`account/status`) и сохранение
+  в Credential Manager, что и ручной; события `device-auth-done` /
+  `device-auth-error` переводят UI, успех/ошибки тостятся только из
+  backend (`notification`/`push_error`) — двойных плашек больше нет.
+- Ручной ввод токена из UI убран (остались только backend-команды
+  `save/validate_yandex_token` для совместимости); вход — только Device Flow.
+- Новые коды ошибок: `device_auth_expired`, `device_auth_denied`.
+
 ## ADR-008: Настройки источника (расширение ТЗ §8)
 
 - **Статус:** принято

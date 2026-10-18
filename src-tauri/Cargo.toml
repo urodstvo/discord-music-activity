@@ -1,6 +1,6 @@
 [package]
 name = "discord-music-activity"
-version = "0.2.0"
+version = "0.3.0"
 description = "Yandex Music Rich Presence for Discord"
 authors = ["urodstvo"]
 edition = "2024"

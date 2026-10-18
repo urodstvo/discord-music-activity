@@ -81,16 +81,16 @@ const appStore = {
     state.settings = settings;
   },
 
-  async validateToken(token: string): Promise<void> {
-    await invoke("validate_yandex_token", { token });
-  },
-
-  async saveToken(token: string): Promise<void> {
-    await invoke("save_yandex_token", { token });
-  },
-
   async removeToken(): Promise<void> {
     await invoke("remove_yandex_token");
+  },
+
+  async startDeviceAuth(): Promise<import("../types/app").DeviceCodeInfo> {
+    return invoke<import("../types/app").DeviceCodeInfo>("start_device_auth");
+  },
+
+  async cancelDeviceAuth(): Promise<void> {
+    await invoke("cancel_device_auth");
   },
 
   async reconnectYandex(): Promise<void> {

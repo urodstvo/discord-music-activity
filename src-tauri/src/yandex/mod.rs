@@ -5,6 +5,7 @@
 //! Ynison; REST используется только для недостающих метаданных по track ID.
 
 pub mod auth;
+pub mod device_auth;
 pub mod errors;
 pub mod metadata;
 pub mod models;

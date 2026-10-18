@@ -98,6 +98,14 @@ export interface NotificationPayload {
   message: string;
 }
 
+/** Ответ команды start_device_auth: что показать пользователю. */
+export interface DeviceCodeInfo {
+  userCode: string;
+  verificationUrl: string;
+  intervalSecs: number;
+  expiresInSecs: number;
+}
+
 /** Человекочитаемые подписи состояний (UI — по-русски). */
 export const YNISON_LABELS: Record<YnisonStatus, string> = {
   disconnected: "Отключено",

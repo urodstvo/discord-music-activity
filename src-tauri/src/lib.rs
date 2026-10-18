@@ -73,6 +73,7 @@ pub fn run() {
             let (supervisor, coordinator_rx) =
                 Supervisor::new(Arc::clone(&shared), app.handle().clone());
             app.manage(supervisor);
+            app.manage(commands::auth::DeviceAuthManager::default());
 
             let coordinator_shared = Arc::clone(&shared);
             let app_handle = app.handle().clone();
@@ -98,7 +99,7 @@ pub fn run() {
                         .clone(),
                 )
                 .menu(&menu)
-                .tooltip("Yandex Music Presence")
+                .tooltip("Яндекс Музыка → Discord")
                 .on_menu_event(|app, event| {
                     let supervisor = app.state::<Supervisor>();
                     match event.id().as_ref() {
@@ -189,6 +190,8 @@ pub fn run() {
             commands::auth::save_yandex_token,
             commands::auth::remove_yandex_token,
             commands::auth::get_auth_status,
+            commands::auth::start_device_auth,
+            commands::auth::cancel_device_auth,
             commands::diagnostics::get_diagnostics,
             commands::diagnostics::open_log_directory,
             commands::diagnostics::quit_app,
