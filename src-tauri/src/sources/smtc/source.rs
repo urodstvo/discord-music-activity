@@ -3,7 +3,7 @@
 //!
 //! SMTC не даёт подписку, удобную для Rust-ядра, поэтому источник работает
 //! polling'ом (~1 c): на каждом тике блокирующие COM-вызовы уходят в
-//! `spawn_blocking` (как в `presence::smtc` — тот же helper `await_smtc`).
+//! `spawn_blocking` (helper `await_smtc` — в `super::helpers`).
 //!
 //! Отличия от Ynison, учтённые в нормализованной модели:
 //! - `track_id` нет → обогащение по ID из `yandex::metadata` не нужно,
@@ -47,7 +47,7 @@ use windows::Media::Control::{
 };
 
 use crate::app_state::AppSharedState;
-use crate::presence::smtc::await_smtc;
+use crate::sources::smtc::helpers::await_smtc;
 use crate::sources::{PlaybackState, PlaybackStatus, SourceEvent, SourceKind};
 
 /// Период опроса SMTC.

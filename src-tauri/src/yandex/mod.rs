@@ -7,5 +7,6 @@
 pub mod auth;
 pub mod errors;
 pub mod metadata;
+pub mod models;
 pub mod protocol;
 pub mod ynison_client;

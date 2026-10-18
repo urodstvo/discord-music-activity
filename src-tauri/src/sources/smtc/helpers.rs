@@ -1,3 +1,9 @@
+//! SMTC-хелперы: блокирующее ожидание WinRT + сверка ложной паузы Ynison.
+//!
+//! Живут в `sources::smtc`, т.к. используются и источником
+//! (`sources::smtc::source`), и коррекцией Ynison-кадров
+//! (`yandex::ynison_client::pause_corrected_by_smtc`).
+//!
 //! Windows SMTC (System Media Transport Controls): коррекция ложной паузы
 //! Ynison (референс: `correct_pause` в WinYandexMusicRPC, MIT — только
 //! документированные факты, не код).
@@ -29,7 +35,7 @@ pub const SMTC_TOTAL_TIMEOUT_MS: u64 = 2_000;
 /// Блокирующее ожидание WinRT async-операции (у windows-future нет
 /// блокирующего `get`): poll `Status` отдаёт результат из `GetResults`.
 /// По таймауту операция отменяется — поток не зависает навсегда.
-pub(crate) fn await_smtc<T: RuntimeType + Clone>(
+pub fn await_smtc<T: RuntimeType + Clone>(
     op: IAsyncOperation<T>,
     deadline: Instant,
 ) -> Result<T> {

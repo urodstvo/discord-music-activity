@@ -919,7 +919,7 @@ async fn pause_corrected_by_smtc(title: &str) -> bool {
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         tokio::task::spawn_blocking(move || {
-            crate::presence::smtc::smtc_reports_playing(&title)
+            crate::sources::smtc::helpers::smtc_reports_playing(&title)
         }),
     )
     .await;

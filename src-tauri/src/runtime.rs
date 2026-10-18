@@ -26,7 +26,6 @@ use crate::app_state::{AppSharedState, DiscordStatus, YnisonStatus};
 use crate::config::model::SourceMode;
 use crate::sources::{PlaybackState, SourceEvent, SourceKind};
 use crate::yandex::auth;
-use crate::yandex::ynison_client::spawn_ynison_client;
 
 /// Сколько секунд Ynison может не подключаться, прежде чем арбитр включит
 /// SMTC-fallback в режиме `auto`. Согласовано с grace-политикой координатора
@@ -126,7 +125,7 @@ impl Arbiter {
             match auth::load_token() {
                 Ok(Some(token)) => {
                     let shutdown = self.shared.shutdown.child_token();
-                    spawn_ynison_client(
+                    crate::sources::ynison::spawn_ynison_source(
                         token,
                         Arc::clone(&self.shared),
                         app.clone(),
@@ -161,7 +160,7 @@ impl Arbiter {
         }
         if want_smtc && state.smtc.is_none() {
             let shutdown = self.shared.shutdown.child_token();
-            crate::sources::smtc_source::spawn_smtc_source(
+            crate::sources::smtc::spawn_smtc_source(
                 shutdown.clone(),
                 self.source_tx.clone(),
                 Arc::clone(&self.shared),

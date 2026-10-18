@@ -60,14 +60,16 @@ Discord. Координатор — единственное место, реш�
 | Модуль | Назначение |
 | --- | --- |
 | `sources/mod.rs`, `sources/model.rs` | Единый контракт источников, нормализованная модель |
-| `sources/smtc_source.rs` | SMTC polling, выбор сессии, sticky/pin, frozen/seek-логика |
+| `sources/ynison.rs` | Адаптер Ynison как источника (регистрация в `sources/`) |
+| `sources/smtc/source.rs` | SMTC polling, выбор сессии, sticky/pin, frozen/seek-логика |
+| `sources/smtc/helpers.rs` | `await_smtc` + SMTC-сверка ложной паузы Ynison |
 | `yandex/ynison_client.rs` | Жизненный цикл WS: redirect → state-поток, keep-alive, backoff |
+| `yandex/models.rs` | Re-export `sources::model` (совместимость с ТЗ §4.1) |
 | `yandex/protocol.rs` | Толерантный разбор кадров, математика позиции |
 | `yandex/metadata.rs` | Доделка метаданных по track id (read-only каталог, LRU-кеш) |
 | `yandex/auth.rs` | Проверка/хранение/удаление OAuth-токена (Credential Manager) |
 | `presence/coordinator.rs` | Решение «публиковать/очищать»: debounce, rate limit, grace |
 | `presence/mapper.rs` | Чистое преобразование `PlaybackState → DiscordActivity` |
-| `presence/smtc.rs` | SMTC-сверка ложной паузы Ynison |
 | `discord/client.rs` | IPC-адаптер discord-rich-presence, rate limiting |
 | `runtime.rs` | Supervisor: арбитр источников, Discord reset, shutdown |
 | `commands/` | Узкий Tauri API: state/settings/auth/playback/`list_media_sessions` |
