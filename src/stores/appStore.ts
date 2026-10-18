@@ -109,6 +109,10 @@ const appStore = {
     await invoke("open_log_directory");
   },
 
+  async listMediaSessions(): Promise<import("../types/app").MediaSessionInfo[]> {
+    return invoke<import("../types/app").MediaSessionInfo[]>("list_media_sessions");
+  },
+
   async quitApp(): Promise<void> {
     await invoke("quit_app");
   },

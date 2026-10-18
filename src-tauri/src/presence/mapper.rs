@@ -2,26 +2,22 @@
 //! (ТЗ §6.3–6.6). Никакой сетевой логики — только mapping + правила
 //! отображения. Используется координатором.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use crate::config::model::AppSettings;
 use crate::discord::models::DiscordActivity;
-use crate::yandex::models::{PlaybackState, PlaybackStatus};
+use crate::sources::{PlaybackState, PlaybackStatus};
 
 /// Построить Activity по состоянию и настройкам.
 ///
 /// Возвращает `None`, если Presence должен быть очищен (Stopped, пустое
 /// состояние, выключенный показ паузы).
-pub fn map_presence(
-    playback: &PlaybackState,
-    settings: &AppSettings,
-    now: SystemTime,
-) -> Option<DiscordActivity> {
+pub fn map_presence(playback: &PlaybackState, settings: &AppSettings) -> Option<DiscordActivity> {
     match playback.status {
         PlaybackStatus::Stopped => None,
         PlaybackStatus::Paused | PlaybackStatus::Unknown if !settings.show_paused_tracks => None,
         PlaybackStatus::Playing | PlaybackStatus::Paused | PlaybackStatus::Unknown => {
-            Some(build_activity(playback, settings, now))
+            Some(build_activity(playback, settings))
         }
     }
 }
@@ -49,11 +45,7 @@ pub fn truncate_text(input: &str, max_len: usize) -> String {
     result
 }
 
-fn build_activity(
-    playback: &PlaybackState,
-    settings: &AppSettings,
-    now: SystemTime,
-) -> DiscordActivity {
+fn build_activity(playback: &PlaybackState, settings: &AppSettings) -> DiscordActivity {
     let mut activity = DiscordActivity::listening();
 
     activity.details = playback
@@ -75,15 +67,23 @@ fn build_activity(
     activity.state = (!state_text.is_empty())
         .then(|| truncate_text(&state_text, crate::discord::models::MAX_FIELD_LEN));
 
-    // Таймстамп: только при Playing и включённой настройке. На паузе не
+    // Таймстампы: только при Playing и включённой настройке. На паузе не
     // отправляем таймстамп, чтобы таймер Discord не продолжал ”тикать“.
+    // Оба таймстампа (start + end) рисуют в Discord прогресс-бар плеера.
+    // База — момент замера позиции (`observed_at`), а не момент отправки:
+    // иначе debounce/rate-limit координатора (до 4.5 c) сдвигал бы старт
+    // вперёд и Discord отставал бы от карточки приложения.
     if settings.show_track_timestamp && playback.status == PlaybackStatus::Playing {
-        if let (Some(position_ms), Ok(elapsed)) = (playback.position_ms, now.duration_since(UNIX_EPOCH))
+        if let (Some(position_ms), Ok(elapsed)) =
+            (playback.position_ms, playback.observed_at.duration_since(UNIX_EPOCH))
         {
             let now_secs = elapsed.as_secs() as i64;
             let position_secs = (position_ms / 1000) as i64;
             let start = now_secs.saturating_sub(position_secs);
             activity.start_timestamp = Some(start);
+            if let Some(duration_ms) = playback.duration_ms {
+                activity.end_timestamp = Some(start + (duration_ms / 1000) as i64);
+            }
         }
     }
 
@@ -114,9 +114,11 @@ fn build_activity(
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
     use crate::discord::models::ACTIVITY_LISTENING;
-    use crate::yandex::models::PlaybackState;
+    use crate::sources::PlaybackState;
 
     fn now() -> SystemTime {
         UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000)
@@ -142,7 +144,7 @@ mod tests {
     fn playing_maps_all_fields() {
         let settings = AppSettings::default();
         let playback = playing("42", "Тестовый трек", &["A", "B"], 30_000, 200_000);
-        let activity = map_presence(&playback, &settings, now()).unwrap();
+        let activity = map_presence(&playback, &settings).unwrap();
         assert_eq!(activity.kind, ACTIVITY_LISTENING);
         assert_eq!(activity.details.as_deref(), Some("Тестовый трек"));
         assert_eq!(activity.state.as_deref(), Some("A, B"));
@@ -155,9 +157,22 @@ mod tests {
     fn timestamp_computed_from_position() {
         let settings = AppSettings::default();
         let playback = playing("1", "Track", &["Artist"], 40_000, 100_000);
-        let activity = map_presence(&playback, &settings, now()).unwrap();
-        // start = now − position (ТЗ §6.5).
+        let activity = map_presence(&playback, &settings).unwrap();
+        // start = now − position; end = start + duration (прогресс-бар).
         assert_eq!(activity.start_timestamp, Some(1_700_000_000 - 40));
+        assert_eq!(activity.end_timestamp, Some(1_700_000_000 - 40 + 100));
+    }
+
+    #[test]
+    fn timestamp_uses_observed_at_not_send_time() {
+        // Позиция замерена 5 c назад (debounce/rate-limit задержали
+        // отправку): старт отсчитывается от замера, Discord не отстаёт.
+        let settings = AppSettings::default();
+        let mut playback = playing("1", "Track", &["Artist"], 40_000, 100_000);
+        playback.observed_at = now() - std::time::Duration::from_secs(5);
+        let activity = map_presence(&playback, &settings).unwrap();
+        assert_eq!(activity.start_timestamp, Some(1_700_000_000 - 5 - 40));
+        assert_eq!(activity.end_timestamp, Some(1_700_000_000 - 5 - 40 + 100));
     }
 
     #[test]
@@ -168,8 +183,9 @@ mod tests {
             status: PlaybackStatus::Paused,
             ..playback
         };
-        let activity = map_presence(&paused, &settings, now()).unwrap();
+        let activity = map_presence(&paused, &settings).unwrap();
         assert_eq!(activity.start_timestamp, None, "пауза — без таймстампа");
+        assert_eq!(activity.end_timestamp, None, "пауза — без прогресс-бара");
         assert_eq!(activity.state.as_deref(), Some("Artist (пауза)"));
     }
 
@@ -181,7 +197,7 @@ mod tests {
             status: PlaybackStatus::Stopped,
             ..playback
         };
-        assert!(map_presence(&stopped, &settings, now()).is_none());
+        assert!(map_presence(&stopped, &settings).is_none());
     }
 
     #[test]
@@ -193,9 +209,9 @@ mod tests {
         };
         let state = PlaybackState::empty();
         // Unknown при выключенном показе паузы не публикуется.
-        assert!(map_presence(&state, &paused_hidden, now()).is_none());
+        assert!(map_presence(&state, &paused_hidden).is_none());
         // Unknown при включённом показе — нейтральная activity без details.
-        let activity = map_presence(&state, &paused_visible, now()).unwrap();
+        let activity = map_presence(&state, &paused_visible).unwrap();
         assert_eq!(activity.details, None);
         assert_eq!(activity.state, None);
     }
@@ -211,14 +227,14 @@ mod tests {
             status: PlaybackStatus::Paused,
             ..playback
         };
-        assert!(map_presence(&paused, &settings, now()).is_none());
+        assert!(map_presence(&paused, &settings).is_none());
     }
 
     #[test]
     fn control_chars_removed() {
         let settings = AppSettings::default();
         let playback = playing("1", "Tra\x0cck", &["Artist"], 0, 100);
-        let activity = map_presence(&playback, &settings, now()).unwrap();
+        let activity = map_presence(&playback, &settings).unwrap();
         assert_eq!(activity.details.as_deref(), Some("Track"));
     }
 
@@ -227,14 +243,14 @@ mod tests {
         let settings = AppSettings::default();
         let mut playback = playing("1", "Track", &["Artist"], 0, 100);
         playback.track_url = Some(url::Url::parse("https://music.yandex.ru/album/1/track/2").unwrap());
-        let activity = map_presence(&playback, &settings, now()).unwrap();
+        let activity = map_presence(&playback, &settings).unwrap();
         assert_eq!(
             activity.button_url.as_deref(),
             Some("https://music.yandex.ru/album/1/track/2")
         );
 
         playback.track_url = Some(url::Url::parse("http://music.yandex.ru/track/3").unwrap());
-        let activity = map_presence(&playback, &settings, now()).unwrap();
+        let activity = map_presence(&playback, &settings).unwrap();
         assert!(activity.button_url.is_none(), "http не допускается");
     }
 
@@ -243,7 +259,7 @@ mod tests {
         let settings = AppSettings::default();
         let long_title = "A".repeat(200);
         let playback = playing("1", &long_title, &["Artist"], 0, 100);
-        let activity = map_presence(&playback, &settings, now()).unwrap();
+        let activity = map_presence(&playback, &settings).unwrap();
         assert!(activity.details.unwrap().chars().count() <= MAX_FIELD_LEN);
     }
 

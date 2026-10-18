@@ -90,7 +90,7 @@ function humanDuration(ms: number | null): string {
       <div class="empty-icon" aria-hidden="true">🎧</div>
       <p class="empty-title">Ничего не воспроизводится</p>
       <p class="hint">
-        Здесь появится трек, как только вы включите музыку в Яндекс Музыке.
+        Здесь появится трек, как только начнётся воспроизведение в выбранном источнике.
       </p>
     </div>
   </div>

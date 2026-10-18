@@ -72,6 +72,10 @@ fn main() {
         Some(id) if !id.trim().is_empty() => {
             // Экспортируем значение в набор env-переменных (option_env! в src).
             println!("cargo:rustc-env=DISCORD_APPLICATION_ID={}", id.trim());
+            // Cargo сам не отслеживает .env: без rerun-if-changed смена ID
+            // не приводила к пересборке (option_env! оставался старым).
+            println!("cargo:rerun-if-changed=.env");
+            println!("cargo:rerun-if-changed=../.env");
         }
         _ => {
             if is_release {

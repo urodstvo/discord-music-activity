@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import appStore from "../stores/appStore";
-import type { AppSettings } from "../types/app";
+import type { AppSettings, MediaSessionInfo } from "../types/app";
 import AuthCard from "../components/AuthCard.vue";
 
 const settings = computed(() => appStore.state.settings);
@@ -96,6 +96,78 @@ async function setTheme(value: AppSettings["theme"]): Promise<void> {
   }
 }
 
+function sourceModeValue(): AppSettings["sourceMode"] {
+  return settings.value?.sourceMode ?? "auto";
+}
+
+async function setSourceMode(
+  value: AppSettings["sourceMode"],
+): Promise<void> {
+  busy.value = true;
+  try {
+    await appStore.saveSettings({ sourceMode: value });
+  } catch {
+    appStore.pushLocalToast("error", "Не удалось сохранить режим источника");
+  } finally {
+    busy.value = false;
+  }
+}
+
+// Фиксация SMTC-процесса (PLAN п.2.1): список видимых сейчас медиа-сессий
+// опрашивается разово, выбор сохраняется в smtcSourceApp ("": авто).
+const mediaSessions = ref<MediaSessionInfo[]>([]);
+const sessionsLoading = ref(false);
+
+async function refreshSessions(): Promise<void> {
+  sessionsLoading.value = true;
+  try {
+    mediaSessions.value = await appStore.listMediaSessions();
+  } catch {
+    appStore.pushLocalToast("error", "Не удалось опросить медиа-сессии");
+  } finally {
+    sessionsLoading.value = false;
+  }
+}
+
+function smtcSourceAppValue(): string {
+  return settings.value?.smtcSourceApp ?? "";
+}
+
+async function setSmtcSourceApp(value: string): Promise<void> {
+  busy.value = true;
+  try {
+    await appStore.saveSettings({ smtcSourceApp: value });
+  } catch {
+    appStore.pushLocalToast("error", "Не удалось зафиксировать процесс");
+  } finally {
+    busy.value = false;
+  }
+}
+
+onMounted(() => {
+  void refreshSessions();
+});
+
+const SMTC_STATUS_RU: Record<string, string> = {
+  playing: "играет",
+  paused: "пауза",
+  stopped: "стоп",
+  unknown: "неизвестно",
+};
+
+function fmtMs(value: number | null): string {
+  if (value === null || value < 0 || !Number.isFinite(value)) return "--:--";
+  const total = Math.floor(value / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** Строка диагностики одной сессии: сырые числа ОС рядом с итогом. */
+function sessionDebugLine(session: MediaSessionInfo): string {
+  const status = SMTC_STATUS_RU[session.status] ?? session.status;
+  const ageSec = (session.positionAgeMs / 1000).toFixed(1);
+  return `[${status}] raw ${fmtMs(session.positionRawMs)} + возраст ${ageSec} c → ${fmtMs(session.positionMs)} / ${fmtMs(session.durationMs)}`;
+}
+
 async function togglePresence(): Promise<void> {
   try {
     await appStore.setPresenceEnabled(!presenceEnabled.value);
@@ -160,6 +232,94 @@ async function reconnectDiscord(): Promise<void> {
         <p class="hint footer">
           Настройки хранятся локально и не содержат токена.
         </p>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">Источник данных</h2>
+        <div class="row">
+          <div>
+            <p>Откуда брать «сейчас играет»</p>
+            <p class="hint">
+              Авто: аккаунт Яндекс Музыки, а при отсутствии токена или
+              проблемах сети — локальные медиа-сессии Windows.
+            </p>
+          </div>
+          <select
+            class="theme-select"
+            :value="sourceModeValue()"
+            :disabled="busy"
+            data-testid="source-mode-select"
+            @change="setSourceMode(($event.target as HTMLSelectElement).value as AppSettings['sourceMode'])"
+          >
+            <option value="auto">Авто</option>
+            <option value="ynison">Только Яндекс Музыка</option>
+            <option value="media_control">Windows Media Control</option>
+          </select>
+        </div>
+        <p class="hint footer">
+          Windows Media Control работает без токена: присенс берётся из
+          любых медиа-приложений Windows (без кнопки и обложки).
+        </p>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">Фиксация процесса</h2>
+        <div class="row">
+          <div>
+            <p>Слушать только это приложение</p>
+            <p class="hint">
+              Авто держит текущий источник и предпочитает приложения
+              браузерам, но при скачках выберите процесс вручную —
+              остальные игнорируются. Применяется сразу, без перезапуска.
+            </p>
+          </div>
+          <select
+            class="theme-select"
+            :value="smtcSourceAppValue()"
+            :disabled="busy"
+            data-testid="smtc-source-select"
+            @change="setSmtcSourceApp(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">Авто</option>
+            <option
+              v-for="session in mediaSessions"
+              :key="session.appId"
+              :value="session.appId"
+            >
+              {{ session.appId }} — {{ session.title }}
+            </option>
+          </select>
+        </div>
+        <div class="row">
+          <div>
+            <p class="hint">
+              {{
+                mediaSessions.length
+                  ? `Сейчас видно сессий: ${mediaSessions.length}. Сверьте числа с реальным плеером: позиция ОС + возраст должны давать текущее место трека.`
+                  : "Сейчас медиа-сессий не видно — начните воспроизведение и обновите список."
+              }}
+            </p>
+          </div>
+          <button
+            :disabled="sessionsLoading"
+            data-testid="smtc-refresh"
+            @click="refreshSessions"
+          >
+            {{ sessionsLoading ? "Опрос…" : "Обновить список" }}
+          </button>
+        </div>
+        <ul v-if="mediaSessions.length" class="session-list">
+          <li
+            v-for="session in mediaSessions"
+            :key="session.appId + session.title"
+            class="session-row"
+          >
+            <strong>{{ session.appId }}</strong>
+            <span v-if="session.isCurrent" class="hint">· текущая по ОС</span>
+            <span class="hint">{{ session.title }}</span>
+            <span class="hint mono">{{ sessionDebugLine(session) }}</span>
+          </li>
+        </ul>
       </div>
 
       <div class="card" data-testid="presence-control">
@@ -276,6 +436,28 @@ async function reconnectDiscord(): Promise<void> {
 
 .theme-select {
   width: 160px;
+}
+
+.session-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
 }
 
 .footer {

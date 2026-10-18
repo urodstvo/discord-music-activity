@@ -28,7 +28,7 @@ pub async fn save_yandex_token(
     // Сначала проверяем — не создаём постоянных сетевых циклов (§5.1).
     auth::validate_token(trimmed).await?;
     auth::save_token(trimmed)?;
-    supervisor.start_ynison(&app);
+    supervisor.on_token_saved(&app);
     let shared = supervisor.shared();
     shared.notify(&app, "info", "Токен сохранён, подключаюсь к Яндекс Музыке");
     Ok(())
@@ -40,14 +40,15 @@ pub async fn remove_yandex_token(
     supervisor: State<'_, Supervisor>,
     app: tauri::AppHandle,
 ) -> AppResult<()> {
-    // 1. Остановить Ynison (координатор очистит Activity).
-    supervisor.stop_ynison(&app);
-    // 2. Забрать токен из credential store.
+    // 1. Забрать токен из credential store.
     auth::delete_token().inspect_err(|err| {
         let shared = supervisor.shared();
         shared.push_error(err, &app);
     })?;
-    // 3. Обновить снапшот: токен отсутствует.
+    // 2. Пересчитать источники: арбитр остановит Ynison и, в режиме auto,
+    //    подхватит SMTC fallback (без токена).
+    supervisor.on_token_removed(&app);
+    // 3. Уведомить UI.
     let shared = supervisor.shared();
     shared.notify(&app, "info", "Токен удалён");
     Ok(())

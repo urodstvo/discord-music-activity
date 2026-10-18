@@ -91,7 +91,12 @@ impl DiscordRpc {
             payload = payload.state(state);
         }
         if let Some(start_secs) = input.start_timestamp {
-            payload = payload.timestamps(activity::Timestamps::new().start(start_secs * 1000));
+            let mut timestamps = activity::Timestamps::new().start(start_secs * 1000);
+            // Прогресс-бар плеера в Discord: нужны оба таймстампа.
+            if let Some(end_secs) = input.end_timestamp {
+                timestamps = timestamps.end(end_secs * 1000);
+            }
+            payload = payload.timestamps(timestamps);
         }
         let large_image = input.large_image.clone();
         let large_text = input.large_text.clone();

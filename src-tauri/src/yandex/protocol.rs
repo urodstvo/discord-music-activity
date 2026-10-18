@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use url::Url;
-use crate::yandex::models::{PlaybackState, PlaybackStatus};
+use crate::sources::{PlaybackState, PlaybackStatus};
 
 /// Maximum raw frame size we are willing to keep in memory (64 MiB, mirroring
 /// the reference clients — frames are quasi-full snapshots and stay small).

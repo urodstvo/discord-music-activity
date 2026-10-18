@@ -28,7 +28,7 @@ use crate::config::persistence::load_or_create_device_id;
 use crate::presence::backoff::Backoff;
 use crate::yandex::errors::{AppError, AppResult, ErrorCode};
 use crate::yandex::metadata::MetadataClient;
-use crate::yandex::models::PlaybackState;
+use crate::sources::PlaybackState;
 use crate::yandex::protocol::{normalize, parse_frame, MAX_FRAME_BYTES};
 
 /// Базовый URL redirect-сервиса.
@@ -352,41 +352,34 @@ enum SessionResult {
 }
 
 /// События Ynison для координатора.
-#[derive(Debug)]
-pub enum YnisonEvent {
-    /// Нормализованное состояние (None — воспроизведение не идёт).
-    PlaybackState(Option<PlaybackState>),
-    /// Требуется авторизация: сервер отклонил токен.
-    RequiresAuth,
-    /// Клиент остановлен по shutdown.
-    Stopped,
-}
+use crate::sources::{SourceEvent, SourceKind};
 
 struct ClientContext {
     token: String,
     shutdown: CancellationToken,
     shared: Arc<AppSharedState>,
     app_handle: tauri::AppHandle,
-    /// Канал координатора: БЕЗ него Discord никогда не узнаёт о треке
+    /// Канал Supervisor-арбитра: без него Discord никогда не узнаёт о треке
     /// (UI обновляется через shared, а presence — только через события).
-    events: mpsc::UnboundedSender<YnisonEvent>,
+    events: mpsc::UnboundedSender<SourceEvent>,
 }
 
 /// Запустить клиент Ynison как фоновую задачу. Токен не логируется.
+/// События отдаются в общий контракт `SourceEvent` (см. `sources/mod.rs`).
 pub fn spawn_ynison_client(
     token: String,
     shared: Arc<AppSharedState>,
     app_handle: tauri::AppHandle,
     shutdown: CancellationToken,
-) -> mpsc::UnboundedReceiver<YnisonEvent> {
-    let (tx, rx) = mpsc::unbounded_channel();
+    events: mpsc::UnboundedSender<SourceEvent>,
+) {
     tauri::async_runtime::spawn(async move {
         let ctx = ClientContext {
             token,
             shutdown,
             shared,
             app_handle,
-            events: tx,
+            events,
         };
         let metadata = MetadataClient::new(ctx.token.clone());
         let mut backoff = Backoff::new();
@@ -395,7 +388,7 @@ pub fn spawn_ynison_client(
             if ctx.shutdown.is_cancelled() {
                 ctx.shared
                     .set_ynison_status(YnisonStatus::Disconnected, &ctx.app_handle);
-                let _ = ctx.events.send(YnisonEvent::Stopped);
+                let _ = ctx.events.send(SourceEvent::Stopped { kind: SourceKind::Ynison });
                 return;
             }
             ctx.shared
@@ -405,7 +398,7 @@ pub fn spawn_ynison_client(
                 SessionResult::Stopped => {
                     ctx.shared
                         .set_ynison_status(YnisonStatus::Disconnected, &ctx.app_handle);
-                    let _ = ctx.events.send(YnisonEvent::Stopped);
+                    let _ = ctx.events.send(SourceEvent::Stopped { kind: SourceKind::Ynison });
                     return;
                 }
                 SessionResult::AuthRequired => {
@@ -413,8 +406,11 @@ pub fn spawn_ynison_client(
                         YnisonStatus::AuthenticationRequired,
                         &ctx.app_handle,
                     );
-                    let _ = ctx.events.send(YnisonEvent::RequiresAuth);
-                    let _ = ctx.events.send(YnisonEvent::PlaybackState(None));
+                    let _ = ctx.events.send(SourceEvent::RequiresAuth);
+                    let _ = ctx.events.send(SourceEvent::State {
+                        kind: SourceKind::Ynison,
+                        state: None,
+                    });
                     return;
                 }
                 SessionResult::NetworkError => {
@@ -437,13 +433,12 @@ pub fn spawn_ynison_client(
                 _ = ctx.shutdown.cancelled() => {
                     ctx.shared
                         .set_ynison_status(YnisonStatus::Disconnected, &ctx.app_handle);
-                    let _ = ctx.events.send(YnisonEvent::Stopped);
+                    let _ = ctx.events.send(SourceEvent::Stopped { kind: SourceKind::Ynison });
                     return;
                 }
             }
         }
     });
-    rx
 }
 
 /// Одна сессия: redirect handshake + подключение к состоянию + цикл кадров.
@@ -738,12 +733,13 @@ fn to_camel(name: &str) -> String {
     out
 }
 
-/// Доставить состояние потребителям: снапшот (UI) И событие координатору
-/// (Discord). Второе — критично: без него координатор вечно видит None.
+/// Доставить состояние Supervisor-арбитру: он решает, публиковать ли
+/// его в UI-снапшот и координатору (один хоп, без дублирования).
 fn deliver_state(ctx: &ClientContext, state: Option<PlaybackState>) {
-    ctx.shared
-        .push_playback(state.clone(), &ctx.app_handle);
-    let _ = ctx.events.send(YnisonEvent::PlaybackState(state));
+    let _ = ctx.events.send(SourceEvent::State {
+        kind: SourceKind::Ynison,
+        state,
+    });
 }
 
 /// Разбор одного сообщения. Возвращает нормализованное состояние.

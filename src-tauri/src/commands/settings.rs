@@ -37,6 +37,9 @@ pub async fn update_settings(
     logging::set_verbose(current.diagnostics_enabled);
     crate::tray::update_tray(&app, current.presence_enabled);
     apply_autostart(&app, current.start_on_launch);
+    // Источники playback могут зависеть от настроек (sourceMode) —
+    // арбитр пересчитает, перезапуска будет только при изменениях.
+    supervisor.settings_changed(&app);
     let _ = app.emit("settings-changed", &current);
     Ok(current)
 }
@@ -74,6 +77,8 @@ fn merged(current: &mut AppSettings, partial: &Map<String, Value>) -> Result<(),
             "closeToTray" => merge_bool(&mut current.close_to_tray, value, key)?,
             "minimizeToTray" => merge_bool(&mut current.minimize_to_tray, value, key)?,
             "theme" => merge_theme(&mut current.theme, value, key)?,
+            "sourceMode" => merge_source_mode(&mut current.source_mode, value, key)?,
+            "smtcSourceApp" => merge_smtc_source_app(&mut current.smtc_source_app, value, key)?,
             "diagnosticsEnabled" => {
                 merge_bool(&mut current.diagnostics_enabled, value, key)?
             }
@@ -116,6 +121,46 @@ fn merge_theme(
         _ => Err(format!("{key}: ожидается system|light|dark")),
     }
 }
+fn merge_source_mode(
+    target: &mut crate::config::model::SourceMode,
+    value: &Value,
+    key: &str,
+) -> Result<(), String> {
+    match value.as_str() {
+        Some("auto") => {
+            *target = crate::config::model::SourceMode::Auto;
+            Ok(())
+        }
+        Some("ynison") => {
+            *target = crate::config::model::SourceMode::Ynison;
+            Ok(())
+        }
+        Some("media_control") => {
+            *target = crate::config::model::SourceMode::MediaControl;
+            Ok(())
+        }
+        _ => Err(format!(
+            "{key}: ожидается auto|ynison|media_control"
+        )),
+    }
+}
+
+/// Закрепление SMTC-процесса: пустая строка — авто-режим,
+/// иначе точный app id (обрезаем пробелы, лимит длины).
+fn merge_smtc_source_app(target: &mut String, value: &Value, key: &str) -> Result<(), String> {
+    match value.as_str() {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.len() > 128 {
+                return Err(format!("{key}: слишком длинный app id"));
+            }
+            *target = trimmed.to_string();
+            Ok(())
+        }
+        None => Err(format!("{key}: ожидается строка")),
+    }
+}
+
 // Применение автозапуска через tauri-plugin-autostart (ТЗ §8).
 fn apply_autostart(app: &AppHandle, enabled: bool) {
     use tauri::Manager;

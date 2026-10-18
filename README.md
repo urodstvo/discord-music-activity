@@ -1,44 +1,77 @@
 # Yandex Music Presence
 
-Лёгкое desktop-приложение для Windows: читает состояние воспроизведения Яндекс
-Музыки (по неофициальному протоколу Ynison) и публикует его в Discord как
-Rich Presence (Activity `LISTENING`). Работает из системного трея, потребляет
-минимум ресурсов в простое.
+Лёгкое desktop-приложение для Windows: читает состояние воспроизведения и
+публикует его в Discord как Rich Presence (Activity `LISTENING`). Работает
+из системного трея, потребляет минимум ресурсов в простое.
+
+Два источника данных (единый интерфейс `sources/`, нормализованная модель
+`PlaybackState`):
+
+- **Ynison** — real-time протокол Яндекс Музыки (нужен OAuth-токен). Точная
+  позиция с сервера, метаданные, обложка, кнопка «Открыть в Яндекс Музыке».
+- **Windows Media Control (SMTC)** — локальный fallback, работает **без
+  токена и без сети**: читает медиа-сессии Windows (Яндекс Музыка, Spotify,
+  браузеры и т.д.). Без кнопки и обложки (сетевого URL у локальных сессий
+  нет), позиция — через timeline ОС.
 
 Приложение **не является плеером**: оно не ищет треки по строкам, не скачивает
 аудио и не управляет воспроизведением.
 
 ## Стек
 
-- Backend: **Rust + Tauri 2** (WebSocket Ynison, Discord IPC, credential store)
+- Backend: **Rust + Tauri 2** (Ynison WebSocket, SMTC, Discord IPC, credential store)
 - Frontend: **Vue 3 + TypeScript + Vite** (интерфейс, настройки, диагностика)
 - Node.js используется только для сборки фронтенда — в runtime его нет
 
 ## Архитектура
 
 ```
-┌─────────────┐   playback events   ┌──────────────────┐  presence  ┌─────────┐
-│ Ynison WS-  │ ───────────────────▶│ Presence         │ ─────────▶ │ Discord │
-│ client      │                     │ coordinator      │            │ IPC     │
-│ (tokio)     │                     │ (std thread:     │            └─────────┘
-└─────────────┘                     │ debounce, rate   │
-       ▶ REST /tracks               │ limit, grace)    │
-         (доделка метаданных)       └──────────────────┘
++----------------+  SourceEvent   +---------------+  CoordinatorEvent  +------------------+  presence  +---------+
+| Ynison WS      | --------------->| Supervisor    | ------------------>| Presence         | ---------> | Discord |
+| client (tokio) |                | (arbiter:     |                   | coordinator      |            | IPC     |
++----------------+                | sourceMode,   |                   | (std thread:     |            +---------+
++----------------+  SourceEvent   | pin, sticky)  |                   | debounce 300ms,  |
+| SMTC polling   | --------------->|               |                   | rate limit 4.5s, |
+| (~1s, COM)     |                +---------------+                   | grace 10s)       |
++----------------+                                                     +------------------+
+        -> REST /tracks (доделка метаданных Ynison по track id)
 ```
+
+Источники шлют только нормализованные события и ничего не знают про
+Discord. Координатор — единственное место, решающее «публиковать/очищать».
+`start` Activity считается от момента замера позиции (`observed_at`),
+а не отправки — debounce/rate-limit точность не съедают.
+
+Особенности SMTC-источника (важно для понимания поведения):
+
+- **Фиксация процесса** (`smtcSourceApp`, Настройки → «Фиксация процесса»):
+  строгий выбор одной медиа-сессии по app id; пусто — авто (sticky +
+  предпочтение не-браузеров и текущей сессии ОС).
+- **Мёртвый timeline**: некоторые плееры не двигают `Position`
+  (напр. десктопная Яндекс Музыка отдаёт константу). Стоящая позиция не
+  публикуется — часы идут локальным секундомером от последнего события,
+  таймер Discord не сбрасывается.
+- **Seek с подтверждением**: скачок позиции публикуется, только если
+  следующий тик его подтверждает; откат к уже опубликованному значению
+  (лаг буферизации при промотке) игнорируется.
 
 Ключевые модули backend (`src-tauri/src/`):
 
 | Модуль | Назначение |
 | --- | --- |
+| `sources/mod.rs`, `sources/model.rs` | Единый контракт источников, нормализованная модель |
+| `sources/smtc_source.rs` | SMTC polling, выбор сессии, sticky/pin, frozen/seek-логика |
 | `yandex/ynison_client.rs` | Жизненный цикл WS: redirect → state-поток, keep-alive, backoff |
-| `yandex/protocol.rs`, `yandex/normalize.rs` | Толерантный разбор кадров, математика позиции |
+| `yandex/protocol.rs` | Толерантный разбор кадров, математика позиции |
 | `yandex/metadata.rs` | Доделка метаданных по track id (read-only каталог, LRU-кеш) |
 | `yandex/auth.rs` | Проверка/хранение/удаление OAuth-токена (Credential Manager) |
-| `presence/coordinator.rs` | Решение «публиковать/очищать»: debounce, rate limit 5/20 c, grace 10 c |
+| `presence/coordinator.rs` | Решение «публиковать/очищать»: debounce, rate limit, grace |
 | `presence/mapper.rs` | Чистое преобразование `PlaybackState → DiscordActivity` |
+| `presence/smtc.rs` | SMTC-сверка ложной паузы Ynison |
 | `discord/client.rs` | IPC-адаптер discord-rich-presence, rate limiting |
-| `config/`, `logging/` | Настройки (без секретов), ротация логов с защитой от утечек |
-| `runtime.rs` | Supervisor долгоживущих задач (cancellation token) |
+| `runtime.rs` | Supervisor: арбитр источников, Discord reset, shutdown |
+| `commands/` | Узкий Tauri API: state/settings/auth/playback/`list_media_sessions` |
+| `config/`, `logging/` | Настройки без секретов (schema v3), ротация логов |
 
 Исследования протоколов — в `docs/research/` (Ynison handshake, Discord IPC),
 архитектурные решения — `docs/architecture-decisions.md`.
@@ -83,14 +116,19 @@ Discord не используется, только публичный Applicati
 ## Тесты
 
 ```bash
-cargo test          # unit-тесты backend (протокол, mapper, backoff, настройки)
+cargo test          # unit-тесты backend (протокол, mapper, SMTC, координатор, настройки)
 pnpm build          # typecheck + сборка фронтенда
 ```
 
 ## Первичный запуск
 
 1. Запустите приложение — окно «Главная».
-2. Вставьте OAuth-токен Яндекс Музыки (поле со скрытым вводом) и сохраните.
+2. Вариант А (точно и с обложкой): вставьте OAuth-токен Яндекс Музыки
+   (поле со скрытым вводом) и сохраните — источником будет Ynison.
+   Вариант Б (без токена): режим «Windows Media Control» в Настройках —
+   presence берётся из локальных медиа-сессий.
 3. Запустите музыку — presence появится в профиле Discord.
-4. Закрытие окна по умолчанию сворачивает приложение в трей; полный выход —
+4. Если статус скачет между приложениями: Настройки → «Фиксация процесса» →
+   «Обновить список» → выберите нужный процесс. Применяется сразу.
+5. Закрытие окна по умолчанию сворачивает приложение в трей; полный выход —
    в диагностике раздела «Завершить работу» или через меню трей.

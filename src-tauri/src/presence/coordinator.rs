@@ -10,7 +10,7 @@
 //! retry подключения Discord с backoff (§6.1).
 
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 use tokio::sync::mpsc;
@@ -24,12 +24,40 @@ use crate::presence::backoff::Backoff;
 use crate::presence::grace::GracePolicy;
 use crate::presence::mapper::map_presence;
 use crate::runtime::CoordinatorEvent;
-use crate::yandex::models::{PlaybackState, PlaybackStatus};
+use crate::sources::{PlaybackState, PlaybackStatus};
 
 /// Debounce быстрых последовательных изменений (ТЗ §6.5: 250–500 мс).
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
 /// Частота микротика координатора (ленивый poll, без busy loop).
 const TICK: Duration = Duration::from_millis(50);
+/// Допуск сравнения таймстампов Activity: округление позиции до секунд и
+/// повторные вычисления `start = now − position` дают дрожание ±1–2 c.
+/// Без допуска каждый такой тик считался бы «новым» Activity и Discord
+/// перезапускал бы таймер плеера с нуля.
+pub const TIMESTAMP_TOLERANCE_SECS: i64 = 3;
+
+fn timestamps_close(a: Option<i64>, b: Option<i64>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.abs_diff(y) <= TIMESTAMP_TOLERANCE_SECS as u64,
+        _ => false,
+    }
+}
+
+/// Эквивалентность Activity с допуском на дрожание таймстампов.
+/// Используется вместо `==`, чтобы округление секунд не перезапускало
+/// таймер Discord (ТЗ §6.5: не обновлять RPC без реального изменения).
+fn activities_equivalent(a: &DiscordActivity, b: &DiscordActivity) -> bool {
+    a.kind == b.kind
+        && a.details == b.details
+        && a.state == b.state
+        && a.large_image == b.large_image
+        && a.large_text == b.large_text
+        && a.button_label == b.button_label
+        && a.button_url == b.button_url
+        && timestamps_close(a.start_timestamp, b.start_timestamp)
+        && timestamps_close(a.end_timestamp, b.end_timestamp)
+}
 
 /// Действие, ожидающее исполнения по дедлайну.
 enum Pending {
@@ -41,6 +69,13 @@ enum Pending {
 struct Coordinator {
     last_settings: AppSettings,
     current: Option<PlaybackState>,
+    /// Желаемое Activity, замороженное с последнего изменения `current`
+    /// или настроек. Пересчитывать его каждый тик нельзя: маппер выводит
+    /// start из `now`, и «живое» desired всегда отличалось от
+    /// опубликованного — в Discord бесконечно сбрасывался таймер.
+    desired: Option<DiscordActivity>,
+    /// Флаг: входы маппинга изменились, нужно пересчитать `desired`.
+    needs_remap: bool,
     /// Момент последнего валидного Ynison-состояния (grace семантика §6.6).
     last_valid_at: Option<Instant>,
     published: Option<DiscordActivity>,
@@ -62,6 +97,8 @@ pub fn run_coordinator(
     let mut state = Coordinator {
         last_settings: shared.settings(),
         current: None,
+        desired: None,
+        needs_remap: false,
         last_valid_at: None,
         published: None,
         pending: None,
@@ -124,12 +161,14 @@ impl Coordinator {
                     self.last_valid_at = Some(Instant::now());
                 }
                 self.current = next.clone();
+                self.needs_remap = true;
             }
             CoordinatorEvent::RequiresAuth => {
                 // Токен отклонён: актуальное состояние появляется только
                 // после повторной авторизации — сброс playback.
                 self.current = None;
                 self.last_valid_at = None;
+                self.needs_remap = true;
             }
             CoordinatorEvent::Stopped => {
                 // Не сбрасываем мгновенно; grace удержит Presence кратко
@@ -159,7 +198,7 @@ impl Coordinator {
                 // (настройка show_paused_tracks) и что делать со Stopped.
                 PlaybackStatus::Playing
                 | PlaybackStatus::Paused
-                | PlaybackStatus::Unknown => map_presence(playback, settings, SystemTime::now()),
+                | PlaybackStatus::Unknown => map_presence(playback, settings),
                 PlaybackStatus::Stopped => None,
             },
             None => {
@@ -180,13 +219,15 @@ impl Coordinator {
         &mut self,
         shared: &Arc<AppSharedState>,
         now: Instant,
-        _settings_changed: bool,
+        settings_changed: bool,
         app: &AppHandle,
     ) {
         // Выключенный Presence: очистка сразу, следующий шаг — не публиковать.
         // last_settings уже обновлён из shared в начале тика — читаем его,
         // не дублируя RwLock-read.
         if !self.last_settings.presence_enabled {
+            self.desired = None;
+            self.needs_remap = false;
             if self.published.is_some() {
                 self.published = None;
                 self.pending = Some(Pending::Clear);
@@ -198,21 +239,28 @@ impl Coordinator {
             return;
         }
 
-        let desired = self.desired_activity(now);
+        // Пересчитать желаемое ТОЛЬКО на изменении входов маппинга:
+        // текущего состояния или настроек.
+        if settings_changed || self.needs_remap {
+            self.needs_remap = false;
+            self.desired = self.desired_activity(now);
+        }
+
+        let desired = self.desired.clone();
 
         match (desired, self.published.clone()) {
             (None, None) => {
                 self.pending = None;
                 self.pending_deadline = None;
             }
-            (Some(activity), Some(published)) if published == activity => {
+            (Some(activity), Some(published)) if activities_equivalent(&published, &activity) => {
                 // Изменений нет — ничего не публикуем (ТЗ §6.5).
                 self.pending = None;
                 self.pending_deadline = None;
             }
             (Some(activity), _) => {
                 let differs = match &self.pending {
-                    Some(Pending::Publish(existing)) => existing != &activity,
+                    Some(Pending::Publish(existing)) => !activities_equivalent(existing, &activity),
                     _ => true,
                 };
                 if differs {
@@ -370,6 +418,8 @@ impl Coordinator {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
 
     fn playback(track_id: &str, status: PlaybackStatus) -> PlaybackState {
@@ -392,6 +442,8 @@ mod tests {
         Coordinator {
             last_settings: settings,
             current: None,
+            desired: None,
+            needs_remap: false,
             last_valid_at: None,
             published: None,
             pending: None,
@@ -431,6 +483,31 @@ mod tests {
         state.current = Some(playback("1", PlaybackStatus::Stopped));
         state.published = Some(DiscordActivity::listening());
         assert!(state.desired_activity(Instant::now()).is_none());
+    }
+
+    #[test]
+    fn timestamp_wobble_does_not_republish() {
+        // Дрожание start/end на ±1–2 c (округление секунд при пересчёте
+        // `start = now − position`) — не повод перезапускать таймер Discord.
+        let mut base = DiscordActivity::listening();
+        base.details = Some("Title".into());
+        base.start_timestamp = Some(1_700_000_000);
+        base.end_timestamp = Some(1_700_000_200);
+        let mut wobbled = base.clone();
+        wobbled.start_timestamp = Some(1_700_000_002);
+        wobbled.end_timestamp = Some(1_700_000_201);
+        assert!(activities_equivalent(&base, &wobbled));
+
+        // Реальный seek (сдвиг на минуту) — повод обновить.
+        let mut seeked = base.clone();
+        seeked.start_timestamp = Some(1_699_999_940);
+        assert!(!activities_equivalent(&base, &seeked));
+
+        // Появившийся/пропавший таймстамп (игра → пауза) — тоже изменение.
+        let mut no_ts = base.clone();
+        no_ts.start_timestamp = None;
+        no_ts.end_timestamp = None;
+        assert!(!activities_equivalent(&base, &no_ts));
     }
 
     #[test]

@@ -13,6 +13,7 @@ mod discord;
 mod logging;
 mod presence;
 mod runtime;
+mod sources;
 mod tray;
 mod yandex;
 
@@ -69,7 +70,8 @@ pub fn run() {
         ))
         .setup(move |app| {
             // Координатор — собственный std-поток (§4.2, §7).
-            let (supervisor, coordinator_rx) = Supervisor::new(Arc::clone(&shared));
+            let (supervisor, coordinator_rx) =
+                Supervisor::new(Arc::clone(&shared), app.handle().clone());
             app.manage(supervisor);
 
             let coordinator_shared = Arc::clone(&shared);
@@ -125,27 +127,20 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Автозапуск подключения (ТЗ §4.4): если токен уже сохранён в
-            // хранилище — подключаемся при старте, не дожидаясь ввода заново.
+            // Автозапуск источников (PLAN п.2): арбитр сам решает, что
+            // запускать — Ynison при наличии токена, SMTC fallback при
+            // отсутствии (sourceMode=auto) или по выбранному режиму.
+            let supervisor = app.state::<Supervisor>();
             match auth::load_token() {
-                Ok(Some(_)) => {
-                    shared.set_token_present(true);
-                    let supervisor = app.state::<Supervisor>();
-                    supervisor.start_ynison(app.handle());
-                }
-                Ok(None) => {
-                    shared.set_token_present(false);
-                    // Настройка может быть включена — просто не найдём токен
-                    // (start_ynison сам залогирует «тока нет»).
-                    if settings.start_on_launch {
-                        let supervisor = app.state::<Supervisor>();
-                        supervisor.start_ynison(app.handle());
-                    }
+                Ok(maybe_token) => {
+                    // Токен есть или нет — арбитр сам решает подмножество
+                    // источников по режиму (SMTC fallback работает без токена).
+                    supervisor.set_token_present(maybe_token.is_some(), app.handle());
                 }
                 Err(err) => {
                     // Хранилище недоступно: сообщаем, токен считаем не заданным.
-                    shared.set_token_present(false);
-                    shared.push_error(&err, app.handle());
+                    supervisor.set_token_present(false, app.handle());
+                    supervisor.shared().push_error(&err, app.handle());
                 }
             }
 
@@ -184,6 +179,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::playback::get_app_state,
+            commands::playback::list_media_sessions,
             commands::playback::reconnect_yandex,
             commands::playback::reconnect_discord,
             commands::settings::get_settings,

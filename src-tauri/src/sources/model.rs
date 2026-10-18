@@ -1,16 +1,17 @@
 //! Нормализованная модель состояния воспроизведения (ТЗ §5.3).
 //!
-//! Модель полностью отвязана от «сырых» сообщений Ynison: `yandex::protocol`
-//! конвертирует сетевой формат в эти типы. Фронтенд и `presence::mapper`
-//! работают только с этой моделью. Время хранится в миллисекундах с проверкой
-//! на переполнение при парсинге.
+//! Модель полностью отвязана от конкретного источника: `yandex::protocol`
+//! конвертирует сетевой формат Ynison в эти типы, `sources::smtc_source` —
+//! локальные медиа-сессии Windows. Фронтенд и `presence::mapper` работают
+//! только с этой моделью. Время хранится в миллисекундах с проверкой на
+//! переполнение при парсинге.
 
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-/// Статус воспроизведения. `Unknown` означает, что протокол не дал
+/// Статус воспроизведения. `Unknown` означает, что источник не дал
 /// достоверного статуса — это не должно приводить к панике.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -29,6 +30,7 @@ pub enum PlaybackStatus {
 pub struct PlaybackState {
     pub status: PlaybackStatus,
     /// Непрозрачный идентификатор трека; не предполагаем, что он числовой.
+    /// Локальные источники (SMTC) могут его не давать.
     pub track_id: Option<String>,
     pub title: Option<String>,
     /// Список исполнителей, никогда не строка.
@@ -38,12 +40,14 @@ pub struct PlaybackState {
     /// Позиция воспроизведения на момент `observed_at`, в миллисекундах.
     pub position_ms: Option<u64>,
     /// Нормализованный URL обложки: только HTTPS и allowlist доменов Яндекса.
+    /// Локальные источники (SMTC) обложку не отдают (сетевого URL нет).
     pub cover_url: Option<Url>,
     /// Ссылка «Открыть в Яндекс Музыке» (HTTPS, проходящая валидацию).
     pub track_url: Option<Url>,
-    /// Название устройства-источника воспроизведения (для UI).
+    /// Название устройства/процесса-источника воспроизведения (для UI).
+    /// Для SMTC здесь будет app id медиа-сессии (напр. «Spotify.exe»).
     pub source_device: Option<String>,
-    /// Момент, когда протокол отдал это состояние.
+    /// Момент, когда источник отдал это состояние.
     #[serde(with = "serde_system_time", default = "SystemTime::now")]
     pub observed_at: SystemTime,
 }

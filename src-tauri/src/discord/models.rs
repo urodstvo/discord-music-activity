@@ -31,6 +31,10 @@ pub struct DiscordActivity {
     /// разрешённых настройках).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_timestamp: Option<i64>,
+    /// Unix timestamp конца трека (start + duration). Discord рисует
+    /// прогресс-бар плеера, когда заданы оба таймстампа (тип Listening).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_timestamp: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub large_image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,6 +53,7 @@ impl DiscordActivity {
             details: None,
             state: None,
             start_timestamp: None,
+            end_timestamp: None,
             large_image: None,
             large_text: None,
             button_label: None,

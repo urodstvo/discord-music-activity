@@ -3,6 +3,7 @@ import appStore from "../stores/appStore";
 import {
   YNISON_LABELS,
   DISCORD_LABELS,
+  SOURCE_LABELS,
 } from "../types/app";
 
 function tone(value: string | undefined): "ok" | "warn" | "bad" {
@@ -26,6 +27,11 @@ const discordLabel = (): string => {
   const status = appStore.state.snapshot?.discord;
   return status ? (DISCORD_LABELS[status] ?? status) : "—";
 };
+
+const sourceLabel = (): string => {
+  const source = appStore.state.snapshot?.source;
+  return source ? (SOURCE_LABELS[source] ?? source) : "—";
+};
 </script>
 
 <template>
@@ -37,6 +43,14 @@ const discordLabel = (): string => {
     <div class="chip">
       <span class="dot" :class="tone(appStore.state.snapshot?.discord)" aria-hidden="true"></span>
       <span>Discord: <strong>{{ discordLabel() }}</strong></span>
+    </div>
+    <div
+      v-if="appStore.state.snapshot?.source"
+      class="chip"
+      data-testid="active-source"
+    >
+      <span class="dot warn" aria-hidden="true"></span>
+      <span>Источник данных: <strong>{{ sourceLabel() }}</strong></span>
     </div>
     <button
       v-if="appStore.state.snapshot?.lastError"

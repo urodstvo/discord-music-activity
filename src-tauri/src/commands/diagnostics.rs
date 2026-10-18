@@ -21,6 +21,7 @@ pub struct DiagnosticsReport {
     pub last_error: Option<crate::app_state::ErrorReport>,
     pub ynison_status: String,
     pub discord_status: String,
+    pub active_source: String,
     pub settings: Option<crate::config::model::AppSettings>,
 }
 
@@ -39,6 +40,7 @@ pub fn get_diagnostics(supervisor: State<'_, Supervisor>) -> DiagnosticsReport {
         last_error: snapshot.last_error,
         ynison_status: status_string(&snapshot.ynison),
         discord_status: status_string(&snapshot.discord),
+        active_source: status_string(&snapshot.source),
         settings: Some(shared.settings()),
     }
 }

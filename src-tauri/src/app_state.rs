@@ -11,8 +11,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::config::model::AppSettings;
+use crate::sources::{PlaybackState, SourceKind};
 use crate::yandex::errors::AppError;
-use crate::yandex::models::PlaybackState;
 
 /// Статус соединения Ynison (ТЗ §5.2 — полный жизненный цикл).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
@@ -75,6 +75,9 @@ pub struct AppStateSnapshot {
     pub playback: Option<PlaybackState>,
     pub presence_enabled: bool,
     pub last_error: Option<ErrorReport>,
+    /// Источник, чьи playback-состояния сейчас публикуются (None — пока
+    /// ни один источник не дал валидных данных).
+    pub source: Option<SourceKind>,
 }
 
 // Безопасные defaults: считаем авторизацию требуемой (safe(§9.2), пока
@@ -88,6 +91,7 @@ impl Default for AppStateSnapshot {
             playback: None,
             presence_enabled: true,
             last_error: None,
+            source: None,
         }
     }
 }
@@ -106,6 +110,7 @@ impl AppSharedState {
         Self {
             snapshot: RwLock::new(AppStateSnapshot {
                 presence_enabled,
+                source: None,
                 ..AppStateSnapshot::default()
             }),
             settings: RwLock::new(settings),
@@ -157,6 +162,19 @@ impl AppSharedState {
             } else if status == YnisonStatus::Connected {
                 snap.auth_required = false;
             }
+        }
+        self.publish_snapshot(app);
+    }
+
+    /// Активный источник playback изменился (арбитр источников).
+    /// Публикуем снапшот только при реальном изменении.
+    pub fn set_active_source(&self, kind: Option<SourceKind>, app: &AppHandle) {
+        {
+            let mut snap = self.snapshot.write().expect("snapshot доступен");
+            if snap.source == kind {
+                return;
+            }
+            snap.source = kind;
         }
         self.publish_snapshot(app);
     }
