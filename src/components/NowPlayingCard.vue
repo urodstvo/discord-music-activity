@@ -55,17 +55,39 @@ function humanDuration(ms: number | null): string {
           :src="coverUrl"
           alt="Обложка альбома"
           class="cover"
+          :title="playback.album ? `Альбом: ${playback.album}` : 'Обложка альбома'"
         />
-        <div v-else class="cover fallback" aria-label="Обложка недоступна">♪</div>
+        <div
+          v-else
+          class="cover fallback"
+          aria-label="Обложка недоступна"
+          title="Обложка недоступна для этого трека"
+        >
+          ♪
+        </div>
 
         <div class="track-info">
-          <p class="title">{{ playback.title ?? "Неизвестный трек" }}</p>
-          <p v-if="artists" class="hint">{{ artists }}</p>
-          <p v-if="playback.album" class="hint">{{ playback.album }}</p>
-          <p v-if="playback.sourceDevice" class="hint">
-            Устройство: {{ playback.sourceDevice }}
+          <p class="title" :title="playback.title ?? ''">
+            {{ playback.title ?? "Неизвестный трек" }}
           </p>
-          <p class="hint status">
+          <p v-if="artists" class="hint" :title="artists">{{ artists }}</p>
+          <p
+            v-if="playback.album"
+            class="hint"
+            :title="`Альбом: ${playback.album}`"
+          >
+            {{ playback.album }}
+          </p>
+          <p
+            class="hint status"
+            :title="
+              playback.status === 'playing'
+                ? 'Трек воспроизводится и транслируется в Discord'
+                : playback.status === 'paused'
+                  ? 'Воспроизведение на паузе'
+                  : 'Воспроизведение остановлено'
+            "
+          >
             {{ statusLabel(playback.status) }}
             <span
               v-if="
@@ -74,12 +96,25 @@ function humanDuration(ms: number | null): string {
                 positionMs !== null
               "
               class="position"
+              :title="
+                playback.status === 'paused'
+                  ? 'Позиция заморожена на паузе'
+                  : 'Текущая позиция трека'
+              "
             >
               · {{ humanDuration(positionMs) }} /
               {{ humanDuration(duration) }}
             </span>
           </p>
-          <div v-if="barPercent !== null" class="bar-wrap">
+          <div
+            v-if="barPercent !== null"
+            class="bar-wrap"
+            role="progressbar"
+            :aria-valuenow="Math.round(barPercent)"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :title="`${humanDuration(positionMs)} из ${humanDuration(duration)}`"
+          >
             <div class="bar" :style="{ width: barPercent + '%' }"></div>
           </div>
         </div>
@@ -88,9 +123,9 @@ function humanDuration(ms: number | null): string {
 
     <div v-else class="empty">
       <div class="empty-icon" aria-hidden="true">🎧</div>
-      <p class="empty-title">Ничего не воспроизводится</p>
+      <p class="empty-title">Тихо… пока ничего не играет</p>
       <p class="hint">
-        Здесь появится трек, как только начнётся воспроизведение в выбранном источнике.
+        Включите музыку — трек появится здесь и в вашем статусе Discord.
       </p>
     </div>
   </div>

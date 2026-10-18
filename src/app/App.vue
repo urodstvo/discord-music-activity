@@ -56,18 +56,21 @@ watch(
     <nav class="tabs" aria-label="Разделы">
       <button
         :class="{ active: currentTab === 'dashboard' }"
+        title="Текущий трек и статус подключений"
         @click="currentTab = 'dashboard'"
       >
         Главная
       </button>
       <button
         :class="{ active: currentTab === 'settings' }"
+        title="Публикация, источники музыки, аккаунт"
         @click="currentTab = 'settings'"
       >
         Настройки
       </button>
       <button
         :class="{ active: currentTab === 'diagnostics' }"
+        title="Состояние, логи и выход из приложения"
         @click="currentTab = 'diagnostics'"
       >
         Диагностика
@@ -81,7 +84,7 @@ watch(
     <DiagnosticsView v-else />
   </main>
   <main v-else class="view">
-    <div class="card hint">Загрузка…</div>
+    <div class="card hint">Открываем приложение…</div>
   </main>
 
   <ToastHost />

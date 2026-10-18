@@ -168,3 +168,11 @@ label {
   /* Длинные строки (пути, ошибки, URL) не должны раздувать карточку. */
   overflow-wrap: anywhere;
 }
+
+/* Элементы с всплывающей подсказкой: намекаем, что есть пояснение. */
+.hint[title],
+p[title],
+.badge[title],
+summary[title] {
+  cursor: help;
+}

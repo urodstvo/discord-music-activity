@@ -54,52 +54,66 @@ async function removeToken(): Promise<void> {
     <h2 class="section-title">Аккаунт Яндекс Музыки</h2>
 
     <template v-if="authed">
-      <p class="hint">
-        Токен сохранён в системном хранилище Windows (Credential Manager).
-        Синхронизация Playback активна.
+      <p class="hint" title="Токен хранится в Credential Manager и никуда не отправляется, кроме Яндекс Музыки">
+        Подключено. Токен надёжно сохранён.
       </p>
       <div class="actions">
-        <button class="danger" :disabled="busy" @click="removeToken">
-          Удалить токен
+        <button
+          class="danger"
+          :disabled="busy"
+          title="Отключить аккаунт и остановить трансляцию"
+          @click="removeToken"
+        >
+          Отключить аккаунт
         </button>
       </div>
     </template>
 
     <template v-else>
-      <p class="hint">
-        Вставьте OAuth-токен Яндекс Музыки. Он хранится только в Windows
-        Credential Manager и не попадает в конфиги и логи.
+      <p class="hint" title="Токен хранится только в системном хранилище Windows и не попадает в логи">
+        Нужен для трансляции треков из Яндекс Музыки.
       </p>
-      <label for="token-input">OAuth-токен</label>
+      <label for="token-input">Токен Яндекс Музыки</label>
       <div class="token-row">
         <input
           id="token-input"
           v-model="tokenInput"
           :type="showToken ? 'text' : 'password'"
-          placeholder="y0_AgAAAA…"
+          placeholder="Вставьте токен…"
           autocomplete="off"
           spellcheck="false"
+          title="OAuth-токен Яндекс Музыки — никому его не показывайте"
           @keydown.enter="saveToken"
         />
-        <button class="btn" type="button" @click="showToken = !showToken">
+        <button
+          class="btn"
+          type="button"
+          :title="showToken ? 'Скрыть токен' : 'Показать токен'"
+          @click="showToken = !showToken"
+        >
           {{ showToken ? "Скрыть" : "Показать" }}
         </button>
       </div>
       <div class="actions">
-        <button class="primary" :disabled="busy" @click="saveToken">
-          Сохранить токен
+        <button
+          class="primary"
+          :disabled="busy"
+          title="Проверить и сохранить токен"
+          @click="saveToken"
+        >
+          Подключить
         </button>
       </div>
       <p class="hint where">
-        Где взять токен: откройте
+        Где взять: откройте
         <a
           href="https://music.yandex.ru"
           target="_blank"
           rel="noreferrer noopener"
+          title="Открыть Яндекс Музыку в браузере"
           >music.yandex.ru</a
         >
-        и используйте значение из cookie <code>YandexMusic OAuth</code> либо
-        инструкцию проекта.
+        и скопируйте токен из cookie — подробности в инструкции проекта.
       </p>
     </template>
   </div>

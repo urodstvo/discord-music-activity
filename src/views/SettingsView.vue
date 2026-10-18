@@ -16,33 +16,39 @@ interface ToggleRow {
   key: keyof AppSettings;
   title: string;
   hint: string;
+  /** Всплывающая подсказка с деталями — для тех, кому нужно больше. */
+  tip?: string;
   testid: string;
 }
 
 // Ключи уже camelCase — совпадают с сериализацией Rust (serde camelCase).
-const TOGGLES: ToggleRow[] = [
+const PRESENCE_TOGGLES: ToggleRow[] = [
   {
     key: "showPausedTracks",
-    title: "Показывать трек на паузе",
-    hint: "Presence остаётся, когда воспроизведение поставлено на паузу.",
+    title: "Трек на паузе",
+    hint: "Оставлять трек в статусе при паузе, без бегущего таймера.",
     testid: "toggle-show-paused",
   },
   {
     key: "showTrackTimestamp",
-    title: "Прогресс трека",
-    hint: "Отображать таймер прослушивания в Discord.",
+    title: "Таймер трека",
+    hint: "Показывать, сколько времени идёт трек.",
+    tip: "На паузе таймер убирается, чтобы не вводить в заблуждение.",
     testid: "toggle-timestamp",
   },
   {
     key: "showAlbumArtwork",
-    title: "Обложка альбома",
-    hint: "Загружать большую картинку из CDN Яндекс Музыки.",
+    title: "Обложка",
+    hint: "Показывать обложку, если Discord её поддерживает.",
     testid: "toggle-artwork",
   },
+];
+
+const APP_TOGGLES: ToggleRow[] = [
   {
     key: "startOnLaunch",
-    title: "Запускать при входе в Windows",
-    hint: "Приложение стартует вместе с системой.",
+    title: "Запуск вместе с Windows",
+    hint: "Приложение стартует свёрнутым в трей.",
     testid: "toggle-autostart",
   },
   {
@@ -57,13 +63,15 @@ const TOGGLES: ToggleRow[] = [
     hint: "Кнопка сворачивания прячет окно, не завершая приложение.",
     testid: "toggle-minimize-to-tray",
   },
-  {
-    key: "diagnosticsEnabled",
-    title: "Расширенная диагностика",
-    hint: "Подробные технические логи (debug). Применяется сразу. Секреты не логируются никогда.",
-    testid: "toggle-diagnostics",
-  },
 ];
+
+const DIAG_TOGGLE: ToggleRow = {
+  key: "diagnosticsEnabled",
+  title: "Подробные логи",
+  hint: "Нужно только для поиска проблем.",
+  tip: "Токен и секреты в логи не пишутся никогда.",
+  testid: "toggle-diagnostics",
+};
 
 function isEnabled(key: keyof AppSettings): boolean {
   const value = settings.value?.[key];
@@ -189,19 +197,90 @@ async function reconnectDiscord(): Promise<void> {
 <template>
   <div class="view settings-view">
     <div class="col">
-      <div class="card toggle-card">
-        <h2 class="section-title">Поведение</h2>
-        <div v-for="toggle in TOGGLES" :key="toggle.key" class="row">
+      <div class="card" data-testid="presence-control">
+        <h2 class="section-title">Discord</h2>
+        <div class="row">
           <div>
+            <p title="Показывать текущий трек в профиле Discord">
+              Показывать музыку в статусе
+            </p>
+            <p class="hint">
+              {{ presenceEnabled ? "Друзья видят, что играет." : "Статус скрыт." }}
+            </p>
+          </div>
+          <button
+            class="primary"
+            data-testid="presence-toggle"
+            :title="presenceEnabled ? 'Скрыть музыку из профиля' : 'Показывать музыку в профиле'"
+            @click="togglePresence"
+          >
+            {{ presenceEnabled ? "Выключить" : "Включить" }}
+          </button>
+        </div>
+        <div v-for="toggle in PRESENCE_TOGGLES" :key="toggle.key" class="row">
+          <div :title="toggle.tip">
             <p>{{ toggle.title }}</p>
             <p class="hint">{{ toggle.hint }}</p>
           </div>
-          <label class="switch" :data-testid="toggle.testid">
+          <label class="switch" :data-testid="toggle.testid" :title="toggle.tip ?? toggle.hint">
             <input
               type="checkbox"
               :checked="isEnabled(toggle.key)"
               :disabled="busy"
+              :aria-label="toggle.title"
               @change="setToggle(toggle.key, ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="slider" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="row">
+          <div title="Если Discord был запущен после приложения">
+            <p>Нет связи с Discord?</p>
+            <p class="hint">Например, Discord запустился позже.</p>
+          </div>
+          <button
+            title="Заново найти запущенный Discord"
+            @click="reconnectDiscord"
+          >
+            Найти Discord
+          </button>
+        </div>
+      </div>
+
+      <div class="card toggle-card">
+        <h2 class="section-title">Приложение</h2>
+        <div v-for="toggle in APP_TOGGLES" :key="toggle.key" class="row">
+          <div>
+            <p>{{ toggle.title }}</p>
+            <p class="hint">{{ toggle.hint }}</p>
+          </div>
+          <label class="switch" :data-testid="toggle.testid" :title="toggle.hint">
+            <input
+              type="checkbox"
+              :checked="isEnabled(toggle.key)"
+              :disabled="busy"
+              :aria-label="toggle.title"
+              @change="setToggle(toggle.key, ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="slider" aria-hidden="true"></span>
+          </label>
+        </div>
+        <div class="row">
+          <div :title="DIAG_TOGGLE.tip">
+            <p>{{ DIAG_TOGGLE.title }}</p>
+            <p class="hint">{{ DIAG_TOGGLE.hint }}</p>
+          </div>
+          <label
+            class="switch"
+            :data-testid="DIAG_TOGGLE.testid"
+            :title="DIAG_TOGGLE.tip"
+          >
+            <input
+              type="checkbox"
+              :checked="isEnabled(DIAG_TOGGLE.key)"
+              :disabled="busy"
+              :aria-label="DIAG_TOGGLE.title"
+              @change="setToggle(DIAG_TOGGLE.key, ($event.target as HTMLInputElement).checked)"
             />
             <span class="slider" aria-hidden="true"></span>
           </label>
@@ -211,37 +290,34 @@ async function reconnectDiscord(): Promise<void> {
 
     <div class="col">
       <div class="card">
-        <h2 class="section-title">Интерфейс</h2>
+        <h2 class="section-title">Оформление</h2>
         <div class="row">
           <div>
             <p>Тема</p>
-            <p class="hint">Светлая, тёмная или системная.</p>
+            <p class="hint">Как выглядит окно.</p>
           </div>
           <select
             class="theme-select"
             :value="themeValue()"
             :disabled="busy"
             data-testid="theme-select"
+            title="Светлая, тёмная или как в системе"
             @change="setTheme(($event.target as HTMLSelectElement).value as AppSettings['theme'])"
           >
-            <option value="system">Системная</option>
+            <option value="system">Как в системе</option>
             <option value="light">Светлая</option>
             <option value="dark">Тёмная</option>
           </select>
         </div>
-        <p class="hint footer">
-          Настройки хранятся локально и не содержат токена.
-        </p>
       </div>
 
       <div class="card">
-        <h2 class="section-title">Источник данных</h2>
+        <h2 class="section-title">Откуда брать музыку</h2>
         <div class="row">
-          <div>
-            <p>Откуда брать «сейчас играет»</p>
+          <div title="Яндекс Музыка — по токену, точнее. Windows — без токена, из любого плеера">
+            <p>Источник</p>
             <p class="hint">
-              Авто: аккаунт Яндекс Музыки, а при отсутствии токена или
-              проблемах сети — локальные медиа-сессии Windows.
+              Авто: сначала Яндекс Музыка, иначе — другие плееры.
             </p>
           </div>
           <select
@@ -249,28 +325,29 @@ async function reconnectDiscord(): Promise<void> {
             :value="sourceModeValue()"
             :disabled="busy"
             data-testid="source-mode-select"
+            title="Какой источник использовать для названия трека"
             @change="setSourceMode(($event.target as HTMLSelectElement).value as AppSettings['sourceMode'])"
           >
             <option value="auto">Авто</option>
             <option value="ynison">Только Яндекс Музыка</option>
-            <option value="media_control">Windows Media Control</option>
+            <option value="media_control">Только другие плееры</option>
           </select>
         </div>
-        <p class="hint footer">
-          Windows Media Control работает без токена: присенс берётся из
-          любых медиа-приложений Windows (без кнопки и обложки).
+        <p
+          class="hint footer"
+          title="Режим Windows не показывает обложку и кнопку «Открыть»"
+        >
+          Без токена работает только режим Windows — без обложки.
         </p>
       </div>
 
       <div class="card">
-        <h2 class="section-title">Фиксация процесса</h2>
+        <h2 class="section-title">Выбор приложения</h2>
         <div class="row">
-          <div>
-            <p>Слушать только это приложение</p>
+          <div title="Если статус прыгает между браузером и плеером — зафиксируйте нужный">
+            <p>Слушать только…</p>
             <p class="hint">
-              Авто держит текущий источник и предпочитает приложения
-              браузерам, но при скачках выберите процесс вручную —
-              остальные игнорируются. Применяется сразу, без перезапуска.
+              Нужно, только если статус прыгает между приложениями.
             </p>
           </div>
           <select
@@ -278,6 +355,7 @@ async function reconnectDiscord(): Promise<void> {
             :value="smtcSourceAppValue()"
             :disabled="busy"
             data-testid="smtc-source-select"
+            title="Игнорировать все приложения, кроме выбранного"
             @change="setSmtcSourceApp(($event.target as HTMLSelectElement).value)"
           >
             <option value="">Авто</option>
@@ -295,59 +373,35 @@ async function reconnectDiscord(): Promise<void> {
             <p class="hint">
               {{
                 mediaSessions.length
-                  ? `Сейчас видно сессий: ${mediaSessions.length}. Сверьте числа с реальным плеером: позиция ОС + возраст должны давать текущее место трека.`
-                  : "Сейчас медиа-сессий не видно — начните воспроизведение и обновите список."
+                  ? `Сейчас играет в приложениях: ${mediaSessions.length}.`
+                  : "Пока ничего не играет — включите музыку и обновите."
               }}
             </p>
           </div>
           <button
             :disabled="sessionsLoading"
             data-testid="smtc-refresh"
+            :title="'Показать, какие приложения сейчас играют'"
             @click="refreshSessions"
           >
-            {{ sessionsLoading ? "Опрос…" : "Обновить список" }}
+            {{ sessionsLoading ? "Ищу…" : "Обновить" }}
           </button>
         </div>
-        <ul v-if="mediaSessions.length" class="session-list">
-          <li
-            v-for="session in mediaSessions"
-            :key="session.appId + session.title"
-            class="session-row"
-          >
-            <strong>{{ session.appId }}</strong>
-            <span v-if="session.isCurrent" class="hint">· текущая по ОС</span>
-            <span class="hint">{{ session.title }}</span>
-            <span class="hint mono">{{ sessionDebugLine(session) }}</span>
-          </li>
-        </ul>
-      </div>
-
-      <div class="card" data-testid="presence-control">
-        <h2 class="section-title">Публикация в Discord</h2>
-        <div class="row">
-          <div>
-            <p>Rich Presence</p>
-            <p class="hint">
-              {{ presenceEnabled
-                ? "Активность публикуется, когда играет музыка."
-                : "Публикация выключена." }}
-            </p>
-          </div>
-          <button
-            class="primary"
-            data-testid="presence-toggle"
-            @click="togglePresence"
-          >
-            {{ presenceEnabled ? "Выключить" : "Включить" }}
-          </button>
-        </div>
-        <div class="row">
-          <div>
-            <p>Discord</p>
-            <p class="hint">Перезапуск подключения, если Discord запустился позже.</p>
-          </div>
-          <button @click="reconnectDiscord">Переподключить</button>
-        </div>
+        <details v-if="mediaSessions.length" class="session-details">
+          <summary class="hint">Показать список приложений</summary>
+          <ul class="session-list">
+            <li
+              v-for="session in mediaSessions"
+              :key="session.appId + session.title"
+              class="session-row"
+              :title="sessionDebugLine(session)"
+            >
+              <strong>{{ session.appId }}</strong>
+              <span v-if="session.isCurrent" class="badge">сейчас</span>
+              <span class="hint">{{ session.title }}</span>
+            </li>
+          </ul>
+        </details>
       </div>
 
       <AuthCard v-if="snapshot" />
@@ -438,9 +492,18 @@ async function reconnectDiscord(): Promise<void> {
   width: 160px;
 }
 
+.session-details {
+  margin-top: 8px;
+}
+
+.session-details summary {
+  cursor: pointer;
+  user-select: none;
+}
+
 .session-list {
   list-style: none;
-  margin: 4px 0 0;
+  margin: 8px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -449,15 +512,21 @@ async function reconnectDiscord(): Promise<void> {
 
 .session-row {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
 }
 
-.mono {
-  font-variant-numeric: tabular-nums;
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 
 .footer {

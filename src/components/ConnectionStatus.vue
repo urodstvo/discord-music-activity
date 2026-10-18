@@ -36,11 +36,17 @@ const sourceLabel = (): string => {
 
 <template>
   <div class="connections">
-    <div class="chip">
+    <div
+      class="chip"
+      title="Соединение с Яндекс Музыкой: получение текущего трека"
+    >
       <span class="dot" :class="tone(appStore.state.snapshot?.ynison)" aria-hidden="true"></span>
       <span>Яндекс Музыка: <strong>{{ ynisonLabel() }}</strong></span>
     </div>
-    <div class="chip">
+    <div
+      class="chip"
+      title="Соединение с запущенным приложением Discord для публикации статуса"
+    >
       <span class="dot" :class="tone(appStore.state.snapshot?.discord)" aria-hidden="true"></span>
       <span>Discord: <strong>{{ discordLabel() }}</strong></span>
     </div>
@@ -48,16 +54,18 @@ const sourceLabel = (): string => {
       v-if="appStore.state.snapshot?.source"
       class="chip"
       data-testid="active-source"
+      title="Откуда сейчас берётся название трека"
     >
       <span class="dot warn" aria-hidden="true"></span>
-      <span>Источник данных: <strong>{{ sourceLabel() }}</strong></span>
+      <span>Откуда играет: <strong>{{ sourceLabel() }}</strong></span>
     </div>
     <button
       v-if="appStore.state.snapshot?.lastError"
       class="btn"
+      title="Попробовать подключиться к Яндекс Музыке заново"
       @click="appStore.reconnectYandex()"
     >
-      Повторить подключение
+      Подключить заново
     </button>
   </div>
 </template>

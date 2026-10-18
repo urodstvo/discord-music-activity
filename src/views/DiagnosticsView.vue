@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import appStore from "../stores/appStore";
 import type { DiagnosticsReport } from "../types/app";
+import { DISCORD_LABELS, YNISON_LABELS } from "../types/app";
 
 const report = ref<DiagnosticsReport | null>(null);
-const expanded = ref(false);
 
 onMounted(async () => {
   try {
@@ -14,11 +14,42 @@ onMounted(async () => {
   }
 });
 
+const ynisonLabel = computed(() => {
+  const raw = report.value?.ynisonStatus;
+  if (!raw) return "—";
+  return YNISON_LABELS[raw as keyof typeof YNISON_LABELS] ?? raw;
+});
+
+const discordLabel = computed(() => {
+  const raw = report.value?.discordStatus;
+  if (!raw) return "—";
+  return DISCORD_LABELS[raw as keyof typeof DISCORD_LABELS] ?? raw;
+});
+
 async function openLogs(): Promise<void> {
   try {
     await appStore.openLogDirectory();
   } catch {
     appStore.pushLocalToast("error", "Не удалось открыть папку логов");
+  }
+}
+
+async function copyReport(): Promise<void> {
+  if (!report.value) return;
+  const safe = {
+    app: report.value.appVersion,
+    ynison: ynisonLabel.value,
+    discord: discordLabel.value,
+    error: report.value.lastError
+      ? `${report.value.lastError.message} (${formatDate(report.value.lastError.atUnixMs)})`
+      : "нет",
+  };
+  const text = `Яндекс Музыка Presence — диагностика\nПриложение: ${safe.app}\nЯндекс Музыка: ${safe.ynison}\nDiscord: ${safe.discord}\nОшибка: ${safe.error}\n(токены и секреты в отчёт не входят)`;
+  try {
+    await navigator.clipboard.writeText(text);
+    appStore.pushLocalToast("info", "Отчёт скопирован — секретов в нём нет");
+  } catch {
+    appStore.pushLocalToast("error", "Не удалось скопировать отчёт");
   }
 }
 
@@ -48,47 +79,68 @@ function formatDate(ms: number): string {
     </div>
 
     <div class="card">
-      <h2 class="section-title">Состояние соединений</h2>
+      <h2 class="section-title">Соединения</h2>
       <div class="grid">
-        <p class="hint">Яндекс Музыка</p>
-        <p data-testid="diag-ynison">{{ report?.ynisonStatus ?? "—" }}</p>
-        <p class="hint">Discord</p>
-        <p data-testid="diag-discord">{{ report?.discordStatus ?? "—" }}</p>
+        <p class="hint" title="Получение текущего трека из Яндекс Музыки">Яндекс Музыка</p>
+        <p data-testid="diag-ynison">{{ ynisonLabel }}</p>
+        <p class="hint" title="Публикация статуса в запущенном Discord">Discord</p>
+        <p data-testid="diag-discord">{{ discordLabel }}</p>
       </div>
-      <p v-if="report?.lastError" class="error-block" data-testid="diag-error">
-        Последняя ошибка: <strong>{{ report.lastError.code }}</strong> —
+      <p
+        v-if="report?.lastError"
+        class="error-block"
+        data-testid="diag-error"
+        :title="`Код: ${report.lastError.code}`"
+      >
         {{ report.lastError.message }}
         <span class="hint">({{ formatDate(report.lastError.atUnixMs) }})</span>
       </p>
-      <p v-else class="hint">Критичных ошибок не зафиксировано.</p>
+      <p v-else class="hint">Ошибок нет — всё работает.</p>
     </div>
 
     <div class="card">
-      <h2 class="section-title">Журнал</h2>
-      <p class="hint log-path" data-testid="log-dir">
+      <h2 class="section-title">Поддержка</h2>
+      <p
+        class="hint log-path"
+        data-testid="log-dir"
+        :title="report?.logDir ?? ''"
+      >
         {{ report?.logDir ?? "—" }}
       </p>
-      <p class="hint">
-        Логи пишутся на диск с ротацией по дням; OAuth-токен и секретные
-        заголовки в лог не попадают.
+      <p class="hint" title="Токен и секреты в логи и отчёт не попадают">
+        Логи и отчёт без секретов — их можно безопасно отправлять.
       </p>
       <div class="actions">
-        <button class="primary" @click="openLogs">Открыть папку логов</button>
-        <span v-if="expanded" class="hint">
-          Автоматическая отправка логов разработчику не выполняется.
-        </span>
-        <button class="btn" @click="expanded = !expanded">
-          {{ expanded ? "Свернуть" : "Подробнее" }}
+        <button
+          class="primary"
+          title="Открыть папку с файлами логов"
+          @click="openLogs"
+        >
+          Папка логов
+        </button>
+        <button
+          class="btn"
+          title="Скопировать краткий отчёт без секретов"
+          @click="copyReport"
+        >
+          Скопировать отчёт
         </button>
       </div>
     </div>
 
     <div class="card danger-zone">
-      <h2 class="section-title">Завершение</h2>
+      <h2 class="section-title">Выход</h2>
       <p class="hint">
-        Полный выход останавливает синхронизацию и очищает Discord Activity.
+        Приложение закроется, статус в Discord пропадёт.
       </p>
-      <button class="danger" data-testid="quit" @click="quit">Выйти из приложения</button>
+      <button
+        class="danger"
+        data-testid="quit"
+        title="Остановить трансляцию и закрыть приложение"
+        @click="quit"
+      >
+        Выйти из приложения
+      </button>
     </div>
   </div>
 </template>

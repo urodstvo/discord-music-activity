@@ -116,6 +116,6 @@ export const DISCORD_LABELS: Record<DiscordStatus, string> = {
 
 /** Человекочитаемые подписи активного источника данных. */
 export const SOURCE_LABELS: Record<SourceKind, string> = {
-  ynison: "Яндекс Музыка (Ynison)",
-  media_control: "Windows Media Control (fallback)",
+  ynison: "Яндекс Музыка",
+  media_control: "Windows (другое приложение)",
 };
