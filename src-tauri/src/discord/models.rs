@@ -9,8 +9,30 @@ pub const ACTIVITY_LISTENING: u8 = 2;
 /// Ограничения полей Discord RPC (безопасные пределы, ТЗ §6.3).
 pub const MAX_FIELD_LEN: usize = 128;
 
-/// Кнопка «Открыть в Яндекс Музыке» (единственная кнопка в MVP).
-pub const OPEN_IN_YANDEX_LABEL: &str = "Открыть в Яндекс Музыке";
+/// Лимит подписи кнопки Discord. Практика показывает, что считается он
+/// в байтах UTF-8, хотя официально не уточняется, поэтому длинные
+/// кириллические подписи молча гасят всю активность для других.
+pub const MAX_BUTTON_LABEL_LEN: usize = 32;
+
+/// Подпись кнопки-ссылки на трек Яндекс Музыки.
+/// Короткая осознанно: лимит Discord — 32 единицы, и практика показывает,
+/// что длинные кириллические подписи (43 байта у «Открыть в Яндекс Музыке»)
+/// гасят всю активность для других пользователей — видимо, лимит считается
+/// в байтах. Все подписи ниже влезают и в символы, и в байты (см. тест).
+pub const OPEN_IN_YANDEX_LABEL: &str = "Яндекс Музыка";
+/// Честная подпись для хитов iTunes (`trackViewUrl`).
+pub const OPEN_IN_ITUNES_LABEL: &str = "Открыть в iTunes";
+/// Честная подпись для хитов Deezer (`deezer.com/...`).
+pub const OPEN_IN_DEEZER_LABEL: &str = "Открыть в Deezer";
+
+/// Подпись кнопки по источнику обогащения (честная: URL и текст совпадают).
+pub fn button_label_for_source(source: Option<crate::sources::TrackSource>) -> &'static str {
+    match source {
+        Some(crate::sources::TrackSource::ITunes) => OPEN_IN_ITUNES_LABEL,
+        Some(crate::sources::TrackSource::Deezer) => OPEN_IN_DEEZER_LABEL,
+        _ => OPEN_IN_YANDEX_LABEL,
+    }
+}
 
 /// Значение image key, если обложку нельзя опубликовать динамически.
 /// Ключ должен быть загружен в Discord Developer Portal.

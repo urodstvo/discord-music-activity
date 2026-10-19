@@ -81,6 +81,12 @@ impl DiscordRpc {
 
     /// Опубликовать Activity.
     pub fn publish(&mut self, input: &DiscordActivity) -> Result<()> {
+        tracing::debug!(
+            "Discord IPC: set_activity image={:?} button={:?} button_url={:?}",
+            input.large_image,
+            input.button_label,
+            input.button_url,
+        );
         let mut payload =
             activity::Activity::new().activity_type(activity::ActivityType::Listening);
 
@@ -111,10 +117,27 @@ impl DiscordRpc {
             payload = payload.assets(assets);
         }
         if let (Some(label), Some(url)) = (input.button_label.clone(), input.button_url.clone()) {
-            payload = payload.buttons(vec![activity::Button::new(label, url)]);
+            // Защита от регресса: подпись длиннее `MAX_BUTTON_LABEL_LEN` байт
+            // гасит всю активность для других (см. тест
+            // `button_labels_fit_discord_limits_in_chars_and_bytes`).
+            if label.len() > crate::discord::models::MAX_BUTTON_LABEL_LEN {
+                tracing::warn!(
+                    "Discord IPC: подпись кнопки {} байт (> {}) — пропускаю кнопку",
+                    label.len(),
+                    crate::discord::models::MAX_BUTTON_LABEL_LEN,
+                );
+            } else {
+                payload = payload.buttons(vec![activity::Button::new(label, url)]);
+            }
         }
 
         self.client.set_activity(payload).map_err(from_ipc_error)?;
+        // Ответ на каждый SET_ACTIVITY обязателен к прочтению: успех — echo
+        // активности, ошибка — код/сообщение. Раньше ответ не читали: реджект
+        // (например, непонравившаяся обложка) был невидим — активность висела,
+        // а картинки не было. Чтение также держит баланс кадров в pipe:
+        // иначе ответы копятся и следующий handshake прочитает чужой кадр.
+        self.expect_reply("SET_ACTIVITY")?;
         self.register_publish();
         Ok(())
     }
@@ -122,13 +145,65 @@ impl DiscordRpc {
     /// Очистить Activity (ТЗ §6.4).
     pub fn clear(&mut self) -> Result<()> {
         self.client.clear_activity().map_err(from_ipc_error)?;
+        // Ответ читаем по той же причине, что в `publish`: баланс кадров
+        // и видимость реджектов очистки.
+        self.expect_reply("CLEAR")?;
         self.register_publish();
         Ok(())
+    }
+
+    /// Прочитать и залогировать вердикт Discord на отправленную команду.
+    /// Блокирует поток до прихода кадра: Discord отвечает всегда (как и на
+    /// handshake, который уже читается блокирующе). Ошибка чтения означает
+    /// мёртвое соединение — координатор переподключится (drop+retry).
+    fn expect_reply(&mut self, command: &str) -> Result<()> {
+        match self.client.recv().map_err(from_ipc_error) {
+            Ok((_, reply)) => match classify_reply(&reply) {
+                ReplyVerdict::Accepted => {
+                    tracing::debug!("Discord IPC: {} принят", command);
+                    Ok(())
+                }
+                ReplyVerdict::Rejected { code, message } => {
+                    tracing::warn!("Discord IPC: {} отклонён ({}): {}", command, code, message);
+                    Ok(())
+                }
+            },
+            Err(err) => Err(err),
+        }
     }
 
     /// Закрыть соединение (ТЗ §6.1: при выходе приложения clean close).
     pub fn close(&mut self) {
         let _ = self.client.close();
+    }
+}
+
+/// Вердикт Discord на SET_ACTIVITY/CLEAR: успех — echo активности,
+/// ошибка — код/сообщение (`evt: "ERROR", data: {code, message}`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReplyVerdict {
+    Accepted,
+    Rejected { code: String, message: String },
+}
+
+/// Чистая классификация ответа Discord для логов и тестов.
+/// Неизвестная/пустая форма трактуется как успех, чтобы не плодить ложных
+/// тревог (обрыв соединения и так виден по ошибкам чтения).
+fn classify_reply(reply: &serde_json::Value) -> ReplyVerdict {
+    if reply.get("evt").and_then(|v| v.as_str()) != Some("ERROR") {
+        return ReplyVerdict::Accepted;
+    }
+    let data = reply.get("data");
+    ReplyVerdict::Rejected {
+        code: data
+            .and_then(|d| d.get("code"))
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".to_string()),
+        message: data
+            .and_then(|d| d.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("?")
+            .to_string(),
     }
 }
 
@@ -156,5 +231,45 @@ mod tests {
         if application_id().is_none() {
             assert!(true);
         }
+    }
+
+    #[test]
+    fn reply_success_is_accepted() {
+        // Echo успеха: evt null, data — активность.
+        let reply = serde_json::json!({
+            "cmd": "SET_ACTIVITY",
+            "evt": null,
+            "data": {"details": "Track", "buttons": [{"label": "L", "url": "https://x"}]},
+            "nonce": "1",
+        });
+        assert_eq!(classify_reply(&reply), ReplyVerdict::Accepted);
+        // Пустая/неизвестная форма — тоже успех, не ошибка.
+        assert_eq!(
+            classify_reply(&serde_json::json!({})),
+            ReplyVerdict::Accepted
+        );
+    }
+
+    #[test]
+    fn reply_error_reports_code_and_message() {
+        let reply = serde_json::json!({
+            "cmd": "SET_ACTIVITY",
+            "evt": "ERROR",
+            "data": {"code": 4000, "message": "Something went wrong"},
+            "nonce": "1",
+        });
+        assert_eq!(
+            classify_reply(&reply),
+            ReplyVerdict::Rejected {
+                code: "4000".to_string(),
+                message: "Something went wrong".to_string(),
+            }
+        );
+        // Битый ERROR без полей — не паникуем, код/текст заглушки.
+        let broken = serde_json::json!({"evt": "ERROR"});
+        assert!(matches!(
+            classify_reply(&broken),
+            ReplyVerdict::Rejected { .. }
+        ));
     }
 }

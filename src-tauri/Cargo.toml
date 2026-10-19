@@ -1,6 +1,6 @@
 [package]
 name = "discord-music-activity"
-version = "0.4.0"
+version = "0.5.0"
 description = "Yandex Music Rich Presence for Discord"
 authors = ["urodstvo"]
 edition = "2024"
@@ -38,6 +38,8 @@ uuid = { version = "1", features = ["v4"] }
 discord-rich-presence = "1"
 reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls", "json"] }
 dirs = "6"
+regex = "1"
+unicode-normalization = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "local-time"] }
 tracing-appender = "0.2"

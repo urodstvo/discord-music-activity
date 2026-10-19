@@ -23,6 +23,22 @@ pub enum PlaybackStatus {
     Unknown,
 }
 
+/// Источник ссылки/обложки трека (для честной подписи кнопки Discord).
+/// Сериализуется в camelCase для фронтенда (`trackSource`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackSource {
+    /// Каталог Яндекс Музыки (`music.yandex.ru`, `avatars.yandex.net`).
+    #[default]
+    Yandex,
+    /// iTunes Search API (`music.apple.com`, `mzstatic.com`).
+    #[serde(rename = "itunes")]
+    ITunes,
+    /// Deezer Search API (`deezer.com`, `dzcdn.net`).
+    #[serde(rename = "deezer")]
+    Deezer,
+}
+
 /// Нормализованное состояние playback на момент `observed_at`.
 /// Сериализуется в camelCase для фронтенда (`usePlaybackClock`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -39,11 +55,17 @@ pub struct PlaybackState {
     pub duration_ms: Option<u64>,
     /// Позиция воспроизведения на момент `observed_at`, в миллисекундах.
     pub position_ms: Option<u64>,
-    /// Нормализованный URL обложки: только HTTPS и allowlist доменов Яндекса.
-    /// Локальные источники (SMTC) обложку не отдают (сетевого URL нет).
+    /// Нормализованный URL обложки: только HTTPS и allowlist доменов
+    /// (Яндекс + iTunes/Deezer, см. `catalogs`). Локальные источники (SMTC)
+    /// без обогащения обложку не отдают (сетевого URL нет).
     pub cover_url: Option<Url>,
-    /// Ссылка «Открыть в Яндекс Музыке» (HTTPS, проходящая валидацию).
+    /// Ссылка на трек (HTTPS, проходящая валидацию). Подпись кнопки зависит
+    /// от `track_source` (честная: Яндекс/iTunes/Deezer).
     pub track_url: Option<Url>,
+    /// Откуда взяты `cover_url`/`track_url` (None = неизвестно/legacy Ynison).
+    /// `Some(Yandex)` для Ynison и Яндекс-поиска (дефолт кнопки — Яндекс).
+    #[serde(default)]
+    pub track_source: Option<TrackSource>,
     /// Название устройства/процесса-источника воспроизведения (для UI).
     /// Для SMTC здесь будет app id медиа-сессии (напр. «Spotify.exe»).
     pub source_device: Option<String>,
@@ -66,6 +88,7 @@ impl PlaybackState {
             position_ms: None,
             cover_url: None,
             track_url: None,
+            track_source: None,
             source_device: None,
             observed_at: SystemTime::now(),
         }

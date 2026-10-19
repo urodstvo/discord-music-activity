@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { PlaybackState, PlaybackStatus } from "../types/app";
+import { TRACK_SOURCE_LABELS } from "../types/app";
 
 const props = defineProps<{
   playback: PlaybackState | null;
@@ -15,6 +16,13 @@ const hasTrack = computed(
     (props.playback.trackId !== null || props.playback.title !== null),
 );
 const coverUrl = computed(() => props.playback?.coverUrl ?? null);
+const trackUrl = computed(() => props.playback?.trackUrl ?? null);
+const trackLabel = computed(() =>
+  props.playback?.trackSource
+    ? (TRACK_SOURCE_LABELS[props.playback.trackSource] ??
+      TRACK_SOURCE_LABELS.yandex)
+    : TRACK_SOURCE_LABELS.yandex,
+);
 const duration = computed(() => props.playback?.durationMs ?? null);
 
 // Полоса прогресса: нужна длительность и позиция; замораживается на паузе.
@@ -117,6 +125,16 @@ function humanDuration(ms: number | null): string {
           >
             <div class="bar" :style="{ width: barPercent + '%' }"></div>
           </div>
+          <a
+            v-if="trackUrl"
+            class="track-link"
+            :href="trackUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            :title="trackLabel"
+          >
+            {{ trackLabel }} ↗
+          </a>
         </div>
       </div>
     </template>
@@ -175,6 +193,18 @@ function humanDuration(ms: number | null): string {
   border-radius: 2px;
   background: var(--accent, #fdb30f);
   transition: width 1s linear;
+}
+
+.track-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--accent, #fdb30f);
+  text-decoration: none;
+}
+
+.track-link:hover {
+  text-decoration: underline;
 }
 
 .empty {

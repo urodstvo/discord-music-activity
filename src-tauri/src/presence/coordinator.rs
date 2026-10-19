@@ -159,6 +159,11 @@ impl Coordinator {
                 if next.is_some() {
                     // Валидное состояние обновляет freshness (grace §6.6).
                     self.last_valid_at = Some(Instant::now());
+                } else {
+                    // Пустое состояние (SMTC: сессии пропали / ошибки опроса):
+                    // grace начнёт тикать, затем — очистка. Лог нужен, чтобы
+                    // отличить «трек встал на паузу» от «источник потерял трек».
+                    tracing::debug!("Presence: получено пустое состояние, тикает grace");
                 }
                 self.current = next.clone();
                 self.needs_remap = true;
@@ -228,14 +233,19 @@ impl Coordinator {
         if !self.last_settings.presence_enabled {
             self.desired = None;
             self.needs_remap = false;
-            if self.published.is_some() {
-                self.published = None;
+            // ВАЖНО: `published` сбрасывает только `execute` после УСПЕШНОГО
+            // `clear()` в Discord. Обнуление раньше превращало ветку
+            // `Pending::Clear` в no-op (`published.is_none() → return`) —
+            // трек вечно висел в Discord. Финальное затирание `pending`
+            // также убивало retry при неудачном clear.
+            if self.published.is_some() || self.pending.is_some() {
                 self.pending = Some(Pending::Clear);
                 self.pending_deadline = Some(now);
                 self.execute(shared, app, now);
+            } else {
+                self.pending = None;
+                self.pending_deadline = None;
             }
-            self.pending = None;
-            self.pending_deadline = None;
             return;
         }
 
@@ -264,6 +274,12 @@ impl Coordinator {
                     _ => true,
                 };
                 if differs {
+                    tracing::debug!(
+                        "Presence: желаемое изменилось (image={:?}, button={:?}), debounce {:?}",
+                        activity.large_image,
+                        activity.button_label,
+                        DEBOUNCE,
+                    );
                     self.pending = Some(Pending::Publish(activity));
                     // Debounce (ТЗ §6.5).
                     self.pending_deadline = Some(now + DEBOUNCE);
@@ -271,7 +287,16 @@ impl Coordinator {
             }
             (None, Some(_)) => {
                 // Явная остановка или истёкший grace (ТЗ §6.6): очистка
-                // немедленно.
+                // немедленно. Причина — в лог: иначе «пропало само» не
+                // отличить от «очистили по Stopped/grace/паузе».
+                let reason = match &self.current {
+                    Some(playback) => match playback.status {
+                        PlaybackStatus::Stopped => "статус Stopped",
+                        _ => "map_presence вернул None (напр. пауза при выключенном показе паузы)",
+                    },
+                    None => "нет валидного состояния + grace истёк (источник потерял трек)",
+                };
+                tracing::info!("Presence: планирую очистку ({})", reason);
                 self.pending = Some(Pending::Clear);
                 self.pending_deadline = Some(now);
             }
@@ -295,6 +320,10 @@ impl Coordinator {
                 let ready_at = self.last_publish + MIN_PUBLISH_INTERVAL;
                 if now < ready_at {
                     // Rate limit (6.5 / Discord 5/20с): публикация откладывается.
+                    tracing::debug!(
+                        "Presence: rate limit, повтор через {} мс",
+                        ready_at.duration_since(now).as_millis()
+                    );
                     self.pending = Some(Pending::Publish(activity));
                     self.pending_deadline = Some(ready_at);
                     return;
@@ -308,12 +337,23 @@ impl Coordinator {
                         self.last_publish = now;
                         self.pending_deadline = None;
                         // Диагностика Presence: что именно ушло в Discord
-                        // (данные отображаемые, секретов нет).
+                        // (данные отображаемые, секретов нет). Хост картинки и
+                        // кнопки — для разбора кейса «в приложении картинка
+                        // есть, а в Discord нет». NB: Discord не рисует кнопки
+                        // в СОБСТВЕННОМ профиле — они видны только другим
+                        // пользователям (официальная дока: "Buttons are only
+                        // visible to other users"). Поэтому факт отправки
+                        // кнопки проверяем по этому логу, а отображение —
+                        // со второго аккаунта / глазами друга.
                         tracing::info!(
-                            "Presence опубликовано: details={:?} state={:?} timestamps={:?}",
+                            "Presence опубликовано: details={:?} state={:?} timestamps={:?} image_host={:?} large_text={:?} button={:?} button_host={:?}",
                             self.published.as_ref().and_then(|a| a.details.clone()),
                             self.published.as_ref().and_then(|a| a.state.clone()),
-                            self.published.as_ref().and_then(|a| a.start_timestamp)
+                            self.published.as_ref().and_then(|a| a.start_timestamp),
+                            self.published.as_ref().and_then(|a| a.large_image.clone()),
+                            self.published.as_ref().and_then(|a| a.large_text.clone()),
+                            self.published.as_ref().and_then(|a| a.button_label.clone()),
+                            self.published.as_ref().and_then(|a| a.button_url.clone()),
                         );
                     }
                     Err(err) => {
@@ -357,6 +397,15 @@ impl Coordinator {
         }
     }
 
+    /// Discord (пере)подключился: новая сессия клиента ничего не знает о
+    /// ранее опубликованном — считать, что не опубликовано ничего, иначе
+    /// presence молча потеряется до следующей смены трека (желаемое совпадёт
+    /// с `published` и републикации не будет).
+    fn on_discord_connected(&mut self) {
+        self.published = None;
+        self.needs_remap = true;
+    }
+
     /// Подключиться к Discord (не чаще backoff).
     fn try_connect(&mut self, shared: &Arc<AppSharedState>, app: &AppHandle, now: Instant) -> bool {
         if self.discord.is_some() {
@@ -370,6 +419,7 @@ impl Coordinator {
             Ok(discord) => {
                 self.discord = Some(discord);
                 self.discord_backoff.reset();
+                self.on_discord_connected();
                 shared.set_discord_status(DiscordStatus::Connected, app);
                 tracing::info!("Discord IPC подключён");
                 true
@@ -433,6 +483,7 @@ mod tests {
             position_ms: Some(10_000),
             cover_url: None,
             track_url: None,
+            track_source: None,
             source_device: None,
             observed_at: SystemTime::now(),
         }
@@ -483,6 +534,19 @@ mod tests {
         state.current = Some(playback("1", PlaybackStatus::Stopped));
         state.published = Some(DiscordActivity::listening());
         assert!(state.desired_activity(Instant::now()).is_none());
+    }
+
+    #[test]
+    fn reconnect_forces_republish() {
+        // Новая сессия Discord ничего не знает о старом published:
+        // без сброса presence потерялся бы до следующей смены трека.
+        let shared = AppSharedState::new(AppSettings::default());
+        let mut state = coordinator(shared.settings());
+        state.published = Some(DiscordActivity::listening());
+        state.needs_remap = false;
+        state.on_discord_connected();
+        assert!(state.published.is_none());
+        assert!(state.needs_remap);
     }
 
     #[test]

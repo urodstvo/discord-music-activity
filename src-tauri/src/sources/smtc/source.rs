@@ -41,14 +41,19 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use url::Url;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
 
 use crate::app_state::AppSharedState;
+use crate::sources::smtc::enrichment::{
+    EnrichmentCache, EnrichmentResult, EnrichmentShared, IdentityKey, attach_cached, build_query,
+    spawn_fetch,
+};
 use crate::sources::smtc::helpers::await_smtc;
-use crate::sources::{PlaybackState, PlaybackStatus, SourceEvent, SourceKind};
+use crate::sources::{PlaybackState, PlaybackStatus, SourceEvent, SourceKind, TrackSource};
 
 /// Период опроса SMTC.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(1_000);
@@ -157,6 +162,12 @@ pub fn spawn_smtc_source(
         // Детект мёртвого timeline: сырая позиция не двигается тик за тиком.
         let mut last_raw_pos: Option<u64> = None;
         let mut stable_raw_count: u32 = 0;
+        // Обогащение обложкой/ссылкой: общий резолвер + поколения для отмены
+        // устаревших поисков, короткоживущий кеш «трек → обогащение»
+        // (перемотка в пределах трека картинку не сбрасывает).
+        let enrichment = std::sync::Arc::new(EnrichmentShared::new());
+        let (enrich_tx, mut enrich_rx) = mpsc::unbounded_channel::<EnrichmentResult>();
+        let mut enrich_cache = EnrichmentCache::default();
 
         loop {
             let tick = tokio::time::sleep(POLL_INTERVAL);
@@ -171,6 +182,16 @@ pub fn spawn_smtc_source(
 
             // Закрепление читаем на каждом тике: смена настройки
             // применяется без перезапуска источника.
+            // Забрать готовые обогащения из фоновых поисков в кеш —
+            // следующий замер подложит их через `attach_cached`
+            // (`Change::Enriched`, без повторного похода в сеть).
+            while let Ok(result) = enrich_rx.try_recv() {
+                tracing::debug!(
+                    "SMTC enrichment: результат в кеше ({:?})",
+                    result.enriched.source,
+                );
+                enrich_cache.insert(result.key, result.enriched);
+            }
             let pinned = {
                 let app = shared.settings().smtc_source_app;
                 let trimmed = app.trim().to_string();
@@ -235,6 +256,12 @@ pub fn spawn_smtc_source(
                                 sticky_app = None;
                                 if emitted.is_some() {
                                     emitted = None;
+                                    tracing::info!(
+                                        "SMTC: сессий нет {} тиков подряд — шлю пустое состояние (очистка по grace)",
+                                        empty_misses,
+                                    );
+                                    // Сессий нет — pending-поиск устарел.
+                                    enrichment.bump_generation();
                                     let _ = events.send(SourceEvent::State {
                                         kind: SourceKind::MediaControl,
                                         state: None,
@@ -261,28 +288,93 @@ pub fn spawn_smtc_source(
                                 stable_raw_count = 0;
                             }
                             let frozen = is_frozen_timeline(stable_raw_count, raw.status);
-                            let state = map_state(raw);
+                            let mut state = map_state(raw);
+                            // Ключ сырых данных ОС — ДО подкладки кеша: кеш сам
+                            // добавляет album/duration, и ключ после attach уже
+                            // другой. Решение о новом поиске принимаем по сырому
+                            // ключу, иначе каждый хит дёргал бы повторный fetch
+                            // (видно в логах: два «ищу» на один трек).
+                            let pre_key = IdentityKey::of(&state);
+                            // Подложить кешированное обогащение в свежий замер:
+                            // перемотка в пределах трека картинку не сбрасывает,
+                            // догонка приходит следующим тиком (Enriched).
+                            attach_cached(&mut state, &enrich_cache);
                             tracing::debug!(
-                                "SMTC {:?} {:?}: raw={}мс age={}мс computed={:?}мс dur={:?}мс{}",
+                                "SMTC {:?} {:?}: raw={}мс age={}мс computed={:?}мс dur={:?}мс cover={} track_url={}{}",
                                 raw.app_id,
                                 raw.status,
                                 raw.position_ms,
                                 raw.position_age_ms,
                                 state.position_ms,
                                 state.duration_ms,
+                                state.cover_url.is_some(),
+                                state.track_url.is_some(),
                                 if frozen { " FROZEN" } else { "" }
                             );
                             match classify_change(emitted.as_ref(), &state, now) {
                                 Change::Same => {
                                     seek_candidate = None;
                                 }
-                                Change::Identity => {
+                                Change::Enriched => {
+                                    // Догонка пришла: тот же трек, но появились
+                                    // обложка/кнопка. Публикуем сразу, в сеть
+                                    // не ходим (результат уже из кеша).
                                     seek_candidate = None;
                                     emitted = Some(EmitMemo::snapshot(&state, now));
                                     let _ = events.send(SourceEvent::State {
                                         kind: SourceKind::MediaControl,
                                         state: Some(state),
                                     });
+                                }
+                                Change::Identity => {
+                                    seek_candidate = None;
+                                    emitted = Some(EmitMemo::snapshot(&state, now));
+                                    if matches!(state.status, PlaybackStatus::Stopped) {
+                                        // Stopped чистит Discord СРАЗУ, без grace:
+                                        // видно в логе, если плеер мигает
+                                        // остановкой посреди перехода трека.
+                                        tracing::info!(
+                                            "SMTC Identity со статусом Stopped ({:?}) — Discord будет очищен",
+                                            state.title,
+                                        );
+                                    }
+                                    let _ = events.send(SourceEvent::State {
+                                        kind: SourceKind::MediaControl,
+                                        state: Some(state.clone()),
+                                    });
+                                    // Фоновая догонка обложки/ссылки каскадом
+                                    // Yandex → iTunes → Deezer. Live-состояние уже
+                                    // опубликовано, поиск опроса не блокирует.
+                                    // Обе настройки выключены — искать нечего.
+                                    // Кеш-хит — искать нечего (уже подложили).
+                                    let settings = shared.settings();
+                                    let wants_enrichment =
+                                        settings.show_album_artwork || settings.show_button;
+                                    let playable = !matches!(state.status, PlaybackStatus::Stopped);
+                                    let cache_miss = pre_key
+                                        .as_ref()
+                                        .and_then(|k| enrich_cache.get(k))
+                                        .is_none();
+                                    if wants_enrichment
+                                        && playable
+                                        && cache_miss
+                                        && let Some(query) = build_query(&state)
+                                    {
+                                        let key =
+                                            pre_key.expect("query построен из того же состояния");
+                                        // Токен читаем в момент Identity
+                                        // (могли удалить между треками).
+                                        let token: Option<String> =
+                                            crate::yandex::auth::load_token().ok().flatten();
+                                        spawn_fetch(
+                                            std::sync::Arc::clone(&enrichment),
+                                            shutdown.clone(),
+                                            enrich_tx.clone(),
+                                            query,
+                                            key,
+                                            token,
+                                        );
+                                    }
                                 }
                                 Change::Seek if frozen || is_revert(emitted.as_ref(), &state) => {
                                     // Стоящая позиция при растущем ожидании —
@@ -329,6 +421,11 @@ pub fn spawn_smtc_source(
                 emitted = None;
                 seek_candidate = None;
                 empty_misses = 0;
+                tracing::info!(
+                    "SMTC: {} ошибок опроса подряд — шлю пустое состояние (очистка по grace)",
+                    errors,
+                );
+                enrichment.bump_generation();
                 let _ = events.send(SourceEvent::State {
                     kind: SourceKind::MediaControl,
                     state: None,
@@ -363,12 +460,15 @@ enum Change {
     Same,
     /// Смена трека/статуса/альбома/длительности — публикуем сразу.
     Identity,
+    /// Тот же трек, но подъехали обложка/кнопка из кеша — публикуем сразу,
+    /// в сеть не ходим.
+    Enriched,
     /// Скачок позиции при том же треке — ждём подтверждения.
     Seek,
 }
 
 /// Классификация отличия: сначала идентичность (трек/статус), затем
-/// объяснимость прогресса позиции.
+/// обогащение (обложка/кнопка из кеша), затем объяснимость прогресса позиции.
 fn classify_change(prev: Option<&EmitMemo>, next: &PlaybackState, now: Instant) -> Change {
     let Some(prev) = prev else {
         return Change::Identity;
@@ -380,6 +480,12 @@ fn classify_change(prev: Option<&EmitMemo>, next: &PlaybackState, now: Instant) 
         || prev.duration_ms != next.duration_ms
     {
         return Change::Identity;
+    }
+    if prev.cover_url != next.cover_url.as_ref().map(Url::as_str).map(str::to_string)
+        || prev.track_url != next.track_url.as_ref().map(Url::as_str).map(str::to_string)
+        || prev.track_source != next.track_source
+    {
+        return Change::Enriched;
     }
     // Проверяем «объяснимость» прогресса: позиция могла расти ровно на
     // время между публикациями — такой тик публиковать не нужно.
@@ -402,6 +508,9 @@ struct EmitMemo {
     duration_ms: Option<u64>,
     status: PlaybackStatus,
     position_ms: u64,
+    cover_url: Option<String>,
+    track_url: Option<String>,
+    track_source: Option<TrackSource>,
     at: Instant,
 }
 
@@ -414,6 +523,17 @@ impl EmitMemo {
             duration_ms: state.duration_ms,
             status: state.status,
             position_ms: state.position_ms.unwrap_or(0),
+            cover_url: state
+                .cover_url
+                .as_ref()
+                .map(Url::as_str)
+                .map(str::to_string),
+            track_url: state
+                .track_url
+                .as_ref()
+                .map(Url::as_str)
+                .map(str::to_string),
+            track_source: state.track_source,
             at: now,
         }
     }
@@ -475,6 +595,7 @@ fn map_state(raw: &RawSession) -> PlaybackState {
         position_ms: Some(position_ms),
         cover_url: None,
         track_url: None,
+        track_source: None,
         source_device: Some(raw.app_id.clone()),
         observed_at: SystemTime::now(),
     }
@@ -702,6 +823,7 @@ mod tests {
             position_ms: Some(position),
             cover_url: None,
             track_url: None,
+            track_source: None,
             source_device: None,
             observed_at: SystemTime::now(),
         }
@@ -768,6 +890,35 @@ mod tests {
         let now = Instant::now();
         let prev = EmitMemo::snapshot(&state(PlaybackStatus::Playing, "Track", 1_000), now);
         let next = state(PlaybackStatus::Paused, "Track", 1_000);
+        assert_eq!(classify_change(Some(&prev), &next, now), Change::Identity);
+    }
+
+    #[test]
+    fn enrichment_arrival_is_enriched_not_identity() {
+        // Тот же трек, но подъехала обложка из кеша: публикуем сразу,
+        // повторный поход в сеть не нужен.
+        let now = Instant::now();
+        let prev = EmitMemo::snapshot(
+            &state(PlaybackStatus::Playing, "Track", 3_000),
+            now - Duration::from_millis(3_000),
+        );
+        let mut next = state(PlaybackStatus::Playing, "Track", 6_000);
+        next.cover_url =
+            Some(url::Url::parse("https://is1-ssl.mzstatic.com/a/600x600bb.jpg").unwrap());
+        next.track_url = Some(url::Url::parse("https://music.apple.com/us/song/1").unwrap());
+        next.track_source = Some(TrackSource::ITunes);
+        assert_eq!(classify_change(Some(&prev), &next, now), Change::Enriched);
+    }
+
+    #[test]
+    fn identity_takes_precedence_over_enrichment() {
+        // Новый трек: даже с обложкой это Identity (триггерит новый поиск),
+        // а не Enriched.
+        let now = Instant::now();
+        let prev = EmitMemo::snapshot(&state(PlaybackStatus::Playing, "Track", 1_000), now);
+        let mut next = state(PlaybackStatus::Playing, "Other", 1_000);
+        next.cover_url =
+            Some(url::Url::parse("https://is1-ssl.mzstatic.com/a/600x600bb.jpg").unwrap());
         assert_eq!(classify_change(Some(&prev), &next, now), Change::Identity);
     }
 

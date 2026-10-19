@@ -14,6 +14,15 @@ export type DiscordStatus = "disconnected" | "connecting" | "connected";
 
 export type PlaybackStatus = "playing" | "paused" | "stopped" | "unknown";
 
+export type TrackSource = "yandex" | "itunes" | "deezer";
+
+/** Честные подписи ссылки на трек по источнику (совпадают с backend). */
+export const TRACK_SOURCE_LABELS: Record<TrackSource, string> = {
+  yandex: "Яндекс Музыка",
+  itunes: "Открыть в iTunes",
+  deezer: "Открыть в Deezer",
+};
+
 export interface PlaybackState {
   status: PlaybackStatus;
   trackId: string | null;
@@ -24,6 +33,8 @@ export interface PlaybackState {
   positionMs: number | null;
   coverUrl: string | null;
   trackUrl: string | null;
+  /** Откуда взяты coverUrl/trackUrl (честная подпись кнопки); null = неизвестно. */
+  trackSource: TrackSource | null;
   sourceDevice: string | null;
   observedAt: number;
 }
@@ -64,7 +75,7 @@ export interface AppSettings {
   sourceMode: SourceMode;
   /** Фиксация SMTC на процессе (PLAN п.2.1). Пусто — авто-выбор. */
   smtcSourceApp: string;
-  /** Кнопка «Открыть в Яндекс Музыке» под активностью. */
+  /** Кнопка-ссылка на трек под активностью. */
   showButton: boolean;
 }
 

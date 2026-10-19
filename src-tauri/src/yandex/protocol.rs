@@ -261,6 +261,7 @@ pub fn normalize(frame: &YnisonFrame, now: SystemTime) -> Option<PlaybackState> 
         position_ms: position_from_status(block, now),
         cover_url,
         track_url: None,
+        track_source: None,
         source_device: source_device_title(frame),
         observed_at: now,
     };
@@ -268,6 +269,9 @@ pub fn normalize(frame: &YnisonFrame, now: SystemTime) -> Option<PlaybackState> 
     // track_url построим только при наличии непрозрачного track id.
     if let Some(id) = normalized.track_id.clone() {
         normalized.track_url = build_track_url(&id);
+        if normalized.track_url.is_some() {
+            normalized.track_source = Some(crate::sources::TrackSource::Yandex);
+        }
     }
 
     Some(normalized)

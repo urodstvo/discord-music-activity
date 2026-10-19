@@ -24,7 +24,7 @@ pub mod ynison;
 
 use serde::Serialize;
 
-pub use model::{PlaybackState, PlaybackStatus};
+pub use model::{PlaybackState, PlaybackStatus, TrackSource};
 
 /// Класс источника данных. Используется для арбитража в Supervisor'е и
 /// отображения активного источника в UI.

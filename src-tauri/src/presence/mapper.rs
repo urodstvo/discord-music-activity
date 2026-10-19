@@ -45,71 +45,6 @@ pub fn truncate_text(input: &str, max_len: usize) -> String {
     result
 }
 
-/// Свести «пробелы + разделители» к одному аккуратному разделителю.
-/// Разделитель (`· • – — - |`) считается островом, только если рядом есть
-/// пробелы или края строки; слипшийся с текстом (напр. `some-title`) —
-/// часть текста и не трогается. Пробеги пробелов сводятся к одному пробелу.
-fn tidy_separators(input: &str) -> String {
-    fn is_sep(c: char) -> bool {
-        matches!(c, '·' | '•' | '–' | '—' | '-' | '|')
-    }
-
-    let mut out = String::new();
-    let mut chars = input.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        // Обычный текстовый символ — копируем как есть.
-        if !(c.is_whitespace() || is_sep(c)) {
-            out.push(c);
-            chars.next();
-            continue;
-        }
-        // Собрать весь пробег из пробелов и разделителей до текста.
-        let mut run = String::new();
-        let mut sep: Option<char> = None;
-        let mut has_ws = false;
-        while let Some(&next) = chars.peek() {
-            if !next.is_whitespace() && !is_sep(next) {
-                break;
-            }
-            if next.is_whitespace() {
-                has_ws = true;
-            } else {
-                sep.get_or_insert(next);
-            }
-            run.push(next);
-            chars.next();
-        }
-
-        let right_text = chars.peek().is_some();
-        match sep {
-            // Разделителей нет — это пробелы: один пробел между словами,
-            // на границах ничего.
-            None => {
-                if !out.is_empty() && right_text {
-                    out.push(' ');
-                }
-            }
-            // Разделители без единого пробела — слиплись с текстом
-            // (напр. `some-title`), значит это часть текста.
-            Some(found) if !has_ws => {
-                out.push_str(&run);
-                let _ = found;
-            }
-            // Остров между двумя текстовыми фрагментами — аккуратный
-            // «первый» разделитель с одиночными пробелами.
-            Some(found) if !out.is_empty() && right_text => {
-                out.push(' ');
-                out.push(found);
-                out.push(' ');
-            }
-            // Остров у края строки (текст только с одной стороны) — убрать.
-            Some(_) => {}
-        }
-    }
-
-    out
-}
-
 fn build_activity(playback: &PlaybackState, settings: &AppSettings) -> DiscordActivity {
     let mut activity = DiscordActivity::listening();
 
@@ -121,11 +56,9 @@ fn build_activity(playback: &PlaybackState, settings: &AppSettings) -> DiscordAc
         .filter(|s| !s.is_empty())
         .map(|s| truncate_text(&s, crate::discord::models::MAX_FIELD_LEN));
 
-    // Вторая строка — всегда «исполнители · альбом»; если чего-то нет,
-    // разделитель не остаётся висеть (tidy_separators).
-    let artists = playback.artists.join(", ");
-    let album = sanitize_text(playback.album.as_deref().unwrap_or(""));
-    let state_text = tidy_separators(&format!("{artists} · {album}"));
+    // Вторая строка — только исполнители (альбом уехал в large_text —
+    // третью строку карточки Discord).
+    let state_text = sanitize_text(&playback.artists.join(", "));
     // Хвост паузы: «Artist (пауза)»; при пустой строке — «(пауза)».
     let state_text = if playback.status == PlaybackStatus::Paused {
         if state_text.is_empty() {
@@ -161,19 +94,29 @@ fn build_activity(playback: &PlaybackState, settings: &AppSettings) -> DiscordAc
     }
 
     // Обложка: только если включено отображение и URL прошёл валидацию.
+    // Третья строка карточки (large_text) — всегда альбом, а не название:
+    // название уже заняло первую строку (details).
+    let large_text = playback
+        .album
+        .as_deref()
+        .map(sanitize_text)
+        .filter(|s| !s.is_empty())
+        .map(|s| truncate_text(&s, crate::discord::models::MAX_FIELD_LEN));
     if settings.show_album_artwork {
         if let Some(cover) = playback.cover_url.as_ref() {
             activity.large_image = Some(cover.as_str().to_string());
-            activity.large_text = playback.title.as_deref().map(sanitize_text);
+            activity.large_text = large_text;
         } else {
             // Fallback на статический asset key (ТЗ §6.7: без unsupported
             // URL — ключ из Developer Portal).
             activity.large_image = Some(crate::discord::models::DEFAULT_ARTWORK_KEY.to_string());
-            activity.large_text = playback.title.as_deref().map(sanitize_text);
+            activity.large_text = large_text;
         }
     }
 
-    // Кнопка: только если включена и URL HTTPS.
+    // Кнопка: только если включена и URL HTTPS. Подпись честная по источнику
+    // (`track_source`): Яндекс/iTunes/Deezer — URL и текст совпадают.
+    // Legacy Ynison без `track_source` — дефолт Яндекс (обратная совместимость).
     if settings.show_button
         && playback
             .track_url
@@ -181,7 +124,9 @@ fn build_activity(playback: &PlaybackState, settings: &AppSettings) -> DiscordAc
             .is_some_and(|u| u.scheme() == "https")
     {
         activity.button_url = Some(playback.track_url.as_ref().unwrap().to_string());
-        activity.button_label = Some(crate::discord::models::OPEN_IN_YANDEX_LABEL.to_string());
+        activity.button_label = Some(
+            crate::discord::models::button_label_for_source(playback.track_source).to_string(),
+        );
     }
 
     activity
@@ -216,6 +161,7 @@ mod tests {
             position_ms: Some(position_ms),
             cover_url: None,
             track_url: None,
+            track_source: None,
             source_device: None,
             observed_at: now(),
         }
@@ -346,29 +292,103 @@ mod tests {
     }
 
     #[test]
-    fn state_shows_artists_and_album() {
+    fn state_shows_only_artists_album_goes_to_large_text() {
+        // Вторая строка — только автор, альбом — третья строка (large_text).
         let settings = AppSettings::default();
         let mut playback = playing("1", "Track", &["A", "B"], 0, 100);
         playback.album = Some("Album".into());
         let activity = map_presence(&playback, &settings).unwrap();
         assert_eq!(activity.details.as_deref(), Some("Track"));
-        assert_eq!(activity.state.as_deref(), Some("A, B · Album"));
+        assert_eq!(activity.state.as_deref(), Some("A, B"));
+        assert_eq!(activity.large_text.as_deref(), Some("Album"));
     }
 
     #[test]
-    fn missing_values_leave_no_separator() {
-        // Нет артистов и альбома: висячего « · » в статусе нет.
+    fn missing_values_leave_no_state() {
+        // Нет артистов и альбома: вторая и третья строки пустые.
         let settings = AppSettings::default();
         let playback = playing("1", "Track", &[], 0, 100);
         let activity = map_presence(&playback, &settings).unwrap();
         assert_eq!(activity.details.as_deref(), Some("Track"));
         assert_eq!(activity.state, None);
+        assert_eq!(activity.large_text, None);
 
-        // Есть только альбом — он и остаётся.
+        // Есть только альбом: вторая строка пуста, альбом — в третьей.
         let mut only_album = playing("1", "Track", &[], 0, 100);
         only_album.album = Some("Album".into());
         let activity = map_presence(&only_album, &settings).unwrap();
-        assert_eq!(activity.state.as_deref(), Some("Album"));
+        assert_eq!(activity.state, None);
+        assert_eq!(activity.large_text.as_deref(), Some("Album"));
+    }
+
+    #[test]
+    fn button_label_matches_source_honestly() {
+        use crate::sources::TrackSource;
+        let settings = AppSettings::default();
+        let mut playback = playing("1", "Track", &["Artist"], 0, 100);
+
+        playback.track_url =
+            Some(url::Url::parse("https://music.yandex.ru/album/1/track/2").unwrap());
+        playback.track_source = Some(TrackSource::Yandex);
+        assert_eq!(
+            map_presence(&playback, &settings)
+                .unwrap()
+                .button_label
+                .as_deref(),
+            Some("Яндекс Музыка")
+        );
+
+        playback.track_url = Some(url::Url::parse("https://music.apple.com/us/song/1").unwrap());
+        playback.track_source = Some(TrackSource::ITunes);
+        let activity = map_presence(&playback, &settings).unwrap();
+        assert_eq!(activity.button_label.as_deref(), Some("Открыть в iTunes"));
+        assert_eq!(
+            activity.button_url.as_deref(),
+            Some("https://music.apple.com/us/song/1")
+        );
+
+        playback.track_url = Some(url::Url::parse("https://www.deezer.com/track/1").unwrap());
+        playback.track_source = Some(TrackSource::Deezer);
+        assert_eq!(
+            map_presence(&playback, &settings)
+                .unwrap()
+                .button_label
+                .as_deref(),
+            Some("Открыть в Deezer")
+        );
+
+        // Legacy без источника — дефолт Яндекс (обратная совместимость).
+        playback.track_source = None;
+        assert_eq!(
+            map_presence(&playback, &settings)
+                .unwrap()
+                .button_label
+                .as_deref(),
+            Some("Яндекс Музыка")
+        );
+    }
+
+    #[test]
+    fn button_labels_fit_discord_limits_in_chars_and_bytes() {
+        // Регрессия: «Открыть в Яндекс Музыке» — 23 символа, но 43 байта;
+        // такая подпись гасила всю активность для других пользователей
+        // (лимит `MAX_BUTTON_LABEL_LEN`, видимо, считается в байтах —
+        // сокращённые подписи FozerG «Откр. в браузере» влезают и так, и так).
+        let limit = crate::discord::models::MAX_BUTTON_LABEL_LEN;
+        for label in [
+            crate::discord::models::OPEN_IN_YANDEX_LABEL,
+            crate::discord::models::OPEN_IN_ITUNES_LABEL,
+            crate::discord::models::OPEN_IN_DEEZER_LABEL,
+        ] {
+            assert!(
+                label.chars().count() <= limit,
+                "label слишком длинный: {label}"
+            );
+            assert!(
+                label.len() <= limit,
+                "label слишком длинный в байтах: {label}"
+            );
+        }
     }
 
     #[test]

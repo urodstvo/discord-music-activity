@@ -370,12 +370,17 @@ impl Supervisor {
     }
 
     /// Токен удалён — источники переключаются по режиму (fallback SMTC).
+    /// Снапшот обновляем сразу (как при сохранении): иначе UI продолжает
+    /// показывать «авторизован», пока не придёт следующий статус Ynison,
+    /// а Ynison уже остановлен и статуса не будет.
     pub fn on_token_removed(&self, app: &tauri::AppHandle) {
         {
             let mut state = self.arbiter.state.lock().expect("арбитр доступен");
             state.token_present = false;
             state.auth_blocked = false;
         }
+        self.shared.set_token_present(false);
+        self.shared.publish_snapshot(app);
         self.arbiter.reconcile(app);
     }
 
