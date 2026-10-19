@@ -75,12 +75,16 @@ pub struct AppSettings {
     /// другие процессы игнорируются, пока закрепление задано.
     #[serde(default)]
     pub smtc_source_app: String,
+    /// Показывать кнопку под активностью (если у трека есть https-ссылка).
+    /// Без field-default: отсутствующее поле берётся из Default impl
+    /// (true), field-level default дал бы false.
+    pub show_button: bool,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            schema_version: 3,
+            schema_version: 4,
             presence_enabled: true,
             show_paused_tracks: true,
             show_track_timestamp: true,
@@ -93,6 +97,7 @@ impl Default for AppSettings {
             diagnostics_enabled: true,
             source_mode: SourceMode::default(),
             smtc_source_app: String::new(),
+            show_button: true,
         }
     }
 }
@@ -100,7 +105,8 @@ impl Default for AppSettings {
 impl AppSettings {
     /// Санитизация настроек после загрузки: invalid значения не должны
     /// ломать запуск. Возвращает очищенную копию. Миграции:
-    /// v1 → v2 добавляет `sourceMode`; v2 → v3 добавляет `smtcSourceApp`.
+    /// v1 → v2 добавляет `sourceMode`; v2 → v3 добавляет `smtcSourceApp`;
+    /// v3 → v4 добавляет `showButton` (управление кнопкой под активностью).
     pub fn sanitized(mut self) -> Self {
         if self.schema_version == 1 {
             // v1 не знал про source_mode: serde default уже проставил Auto.
@@ -112,13 +118,19 @@ impl AppSettings {
             self.smtc_source_app = String::new();
             self.schema_version = 3;
         }
-        if self.schema_version == 0 || self.schema_version > 3 {
+        if self.schema_version == 3 {
+            // v3 не знал про showButton: следующий шаг миграции проставит
+            // версию, поле получит значение из Default impl.
+            tracing::info!("миграция настроек: schemaVersion 3 → 4 (+showButton)");
+            self.schema_version = 4;
+        }
+        if self.schema_version == 0 || self.schema_version > 4 {
             // Неизвестная версия — сбрасываем на текущую, сохраняя поля.
             tracing::warn!(
-                "неизвестная schemaVersion={} — сбрасываю на 3",
+                "неизвестная schemaVersion={} — сбрасываю на 4",
                 self.schema_version
             );
-            self.schema_version = 3;
+            self.schema_version = 4;
         }
         self
     }
@@ -136,9 +148,10 @@ mod tests {
         assert!(!s.start_on_launch);
         assert_eq!(s.theme, Theme::System);
         assert_eq!(s.language, Language::Ru);
-        assert_eq!(s.schema_version, 3);
+        assert_eq!(s.schema_version, 4);
         assert_eq!(s.source_mode, SourceMode::Auto);
         assert!(s.smtc_source_app.is_empty(), "по умолчанию — авто");
+        assert!(s.show_button, "кнопка по умолчанию видна");
     }
 
     #[test]
@@ -149,7 +162,7 @@ mod tests {
             serde_json::from_str(r#"{"schemaVersion": 1, "presenceEnabled": false}"#).unwrap();
         assert_eq!(s.source_mode, SourceMode::Auto);
         s = s.sanitized();
-        assert_eq!(s.schema_version, 3);
+        assert_eq!(s.schema_version, 4);
         assert!(!s.presence_enabled, "значения v1 сохраняются");
     }
 
@@ -159,8 +172,22 @@ mod tests {
             serde_json::from_str(r#"{"schemaVersion": 2, "presenceEnabled": true}"#).unwrap();
         assert!(s.smtc_source_app.is_empty());
         s = s.sanitized();
-        assert_eq!(s.schema_version, 3);
+        assert_eq!(s.schema_version, 4);
         assert!(s.presence_enabled, "значения v2 сохраняются");
+    }
+
+    #[test]
+    fn v3_config_migrates_to_v4_with_defaults() {
+        // Конфиг v3 (до появления управления кнопкой): showButton получает
+        // дефолт, соответствующий прежнему виду статуса. Аналогично старые
+        // конфиги v4 с удалёнными полями-шаблонами: serde просто игнорирует
+        // неизвестные ключи.
+        let mut s: AppSettings =
+            serde_json::from_str(r#"{"schemaVersion": 3, "showPausedTracks": false}"#).unwrap();
+        assert!(s.show_button);
+        s = s.sanitized();
+        assert_eq!(s.schema_version, 4);
+        assert!(!s.show_paused_tracks, "значения v3 сохраняются");
     }
 
     #[test]
@@ -190,7 +217,7 @@ mod tests {
             ..AppSettings::default()
         }
         .sanitized();
-        assert_eq!(s.schema_version, 3);
+        assert_eq!(s.schema_version, 4);
     }
 
     #[test]

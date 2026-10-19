@@ -64,6 +64,8 @@ export interface AppSettings {
   sourceMode: SourceMode;
   /** Фиксация SMTC на процессе (PLAN п.2.1). Пусто — авто-выбор. */
   smtcSourceApp: string;
+  /** Кнопка «Открыть в Яндекс Музыке» под активностью. */
+  showButton: boolean;
 }
 
 /** Видимая медиа-сессия Windows (команда list_media_sessions). */

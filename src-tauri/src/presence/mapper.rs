@@ -45,9 +45,75 @@ pub fn truncate_text(input: &str, max_len: usize) -> String {
     result
 }
 
+/// Свести «пробелы + разделители» к одному аккуратному разделителю.
+/// Разделитель (`· • – — - |`) считается островом, только если рядом есть
+/// пробелы или края строки; слипшийся с текстом (напр. `some-title`) —
+/// часть текста и не трогается. Пробеги пробелов сводятся к одному пробелу.
+fn tidy_separators(input: &str) -> String {
+    fn is_sep(c: char) -> bool {
+        matches!(c, '·' | '•' | '–' | '—' | '-' | '|')
+    }
+
+    let mut out = String::new();
+    let mut chars = input.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        // Обычный текстовый символ — копируем как есть.
+        if !(c.is_whitespace() || is_sep(c)) {
+            out.push(c);
+            chars.next();
+            continue;
+        }
+        // Собрать весь пробег из пробелов и разделителей до текста.
+        let mut run = String::new();
+        let mut sep: Option<char> = None;
+        let mut has_ws = false;
+        while let Some(&next) = chars.peek() {
+            if !next.is_whitespace() && !is_sep(next) {
+                break;
+            }
+            if next.is_whitespace() {
+                has_ws = true;
+            } else {
+                sep.get_or_insert(next);
+            }
+            run.push(next);
+            chars.next();
+        }
+
+        let right_text = chars.peek().is_some();
+        match sep {
+            // Разделителей нет — это пробелы: один пробел между словами,
+            // на границах ничего.
+            None => {
+                if !out.is_empty() && right_text {
+                    out.push(' ');
+                }
+            }
+            // Разделители без единого пробела — слиплись с текстом
+            // (напр. `some-title`), значит это часть текста.
+            Some(found) if !has_ws => {
+                out.push_str(&run);
+                let _ = found;
+            }
+            // Остров между двумя текстовыми фрагментами — аккуратный
+            // «первый» разделитель с одиночными пробелами.
+            Some(found) if !out.is_empty() && right_text => {
+                out.push(' ');
+                out.push(found);
+                out.push(' ');
+            }
+            // Остров у края строки (текст только с одной стороны) — убрать.
+            Some(_) => {}
+        }
+    }
+
+    out
+}
+
 fn build_activity(playback: &PlaybackState, settings: &AppSettings) -> DiscordActivity {
     let mut activity = DiscordActivity::listening();
 
+    // Верхняя строка — всегда название трека.
     activity.details = playback
         .title
         .as_deref()
@@ -55,15 +121,21 @@ fn build_activity(playback: &PlaybackState, settings: &AppSettings) -> DiscordAc
         .filter(|s| !s.is_empty())
         .map(|s| truncate_text(&s, crate::discord::models::MAX_FIELD_LEN));
 
+    // Вторая строка — всегда «исполнители · альбом»; если чего-то нет,
+    // разделитель не остаётся висеть (tidy_separators).
     let artists = playback.artists.join(", ");
-    let state_text = if artists.is_empty() {
-        playback.album.clone().unwrap_or_default()
-    } else if playback.status == PlaybackStatus::Paused {
-        format!("{artists} (пауза)")
+    let album = sanitize_text(playback.album.as_deref().unwrap_or(""));
+    let state_text = tidy_separators(&format!("{artists} · {album}"));
+    // Хвост паузы: «Artist (пауза)»; при пустой строке — «(пауза)».
+    let state_text = if playback.status == PlaybackStatus::Paused {
+        if state_text.is_empty() {
+            "(пауза)".to_string()
+        } else {
+            format!("{state_text} (пауза)")
+        }
     } else {
-        artists
+        state_text
     };
-    let state_text = sanitize_text(&state_text);
     activity.state = (!state_text.is_empty())
         .then(|| truncate_text(&state_text, crate::discord::models::MAX_FIELD_LEN));
 
@@ -74,9 +146,10 @@ fn build_activity(playback: &PlaybackState, settings: &AppSettings) -> DiscordAc
     // иначе debounce/rate-limit координатора (до 4.5 c) сдвигал бы старт
     // вперёд и Discord отставал бы от карточки приложения.
     if settings.show_track_timestamp && playback.status == PlaybackStatus::Playing {
-        if let (Some(position_ms), Ok(elapsed)) =
-            (playback.position_ms, playback.observed_at.duration_since(UNIX_EPOCH))
-        {
+        if let (Some(position_ms), Ok(elapsed)) = (
+            playback.position_ms,
+            playback.observed_at.duration_since(UNIX_EPOCH),
+        ) {
             let now_secs = elapsed.as_secs() as i64;
             let position_secs = (position_ms / 1000) as i64;
             let start = now_secs.saturating_sub(position_secs);
@@ -100,13 +173,15 @@ fn build_activity(playback: &PlaybackState, settings: &AppSettings) -> DiscordAc
         }
     }
 
-    // Кнопка: только если URL HTTPS.
-    if let Some(track_url) = playback.track_url.as_ref() {
-        if track_url.scheme() == "https" {
-            activity.button_url = Some(track_url.to_string());
-            activity.button_label =
-                Some(crate::discord::models::OPEN_IN_YANDEX_LABEL.to_string());
-        }
+    // Кнопка: только если включена и URL HTTPS.
+    if settings.show_button
+        && playback
+            .track_url
+            .as_ref()
+            .is_some_and(|u| u.scheme() == "https")
+    {
+        activity.button_url = Some(playback.track_url.as_ref().unwrap().to_string());
+        activity.button_label = Some(crate::discord::models::OPEN_IN_YANDEX_LABEL.to_string());
     }
 
     activity
@@ -124,7 +199,13 @@ mod tests {
         UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000)
     }
 
-    fn playing(track_id: &str, title: &str, artists: &[&str], position_ms: u64, duration_ms: u64) -> PlaybackState {
+    fn playing(
+        track_id: &str,
+        title: &str,
+        artists: &[&str],
+        position_ms: u64,
+        duration_ms: u64,
+    ) -> PlaybackState {
         PlaybackState {
             status: PlaybackStatus::Playing,
             track_id: Some(track_id.to_string()),
@@ -242,7 +323,8 @@ mod tests {
     fn https_only_button() {
         let settings = AppSettings::default();
         let mut playback = playing("1", "Track", &["Artist"], 0, 100);
-        playback.track_url = Some(url::Url::parse("https://music.yandex.ru/album/1/track/2").unwrap());
+        playback.track_url =
+            Some(url::Url::parse("https://music.yandex.ru/album/1/track/2").unwrap());
         let activity = map_presence(&playback, &settings).unwrap();
         assert_eq!(
             activity.button_url.as_deref(),
@@ -261,6 +343,45 @@ mod tests {
         let playback = playing("1", &long_title, &["Artist"], 0, 100);
         let activity = map_presence(&playback, &settings).unwrap();
         assert!(activity.details.unwrap().chars().count() <= MAX_FIELD_LEN);
+    }
+
+    #[test]
+    fn state_shows_artists_and_album() {
+        let settings = AppSettings::default();
+        let mut playback = playing("1", "Track", &["A", "B"], 0, 100);
+        playback.album = Some("Album".into());
+        let activity = map_presence(&playback, &settings).unwrap();
+        assert_eq!(activity.details.as_deref(), Some("Track"));
+        assert_eq!(activity.state.as_deref(), Some("A, B · Album"));
+    }
+
+    #[test]
+    fn missing_values_leave_no_separator() {
+        // Нет артистов и альбома: висячего « · » в статусе нет.
+        let settings = AppSettings::default();
+        let playback = playing("1", "Track", &[], 0, 100);
+        let activity = map_presence(&playback, &settings).unwrap();
+        assert_eq!(activity.details.as_deref(), Some("Track"));
+        assert_eq!(activity.state, None);
+
+        // Есть только альбом — он и остаётся.
+        let mut only_album = playing("1", "Track", &[], 0, 100);
+        only_album.album = Some("Album".into());
+        let activity = map_presence(&only_album, &settings).unwrap();
+        assert_eq!(activity.state.as_deref(), Some("Album"));
+    }
+
+    #[test]
+    fn button_hidden_by_setting() {
+        let settings = AppSettings {
+            show_button: false,
+            ..AppSettings::default()
+        };
+        let mut playback = playing("1", "Track", &["Artist"], 0, 100);
+        playback.track_url = Some(url::Url::parse("https://music.yandex.ru/track/2").unwrap());
+        let activity = map_presence(&playback, &settings).unwrap();
+        assert!(activity.button_url.is_none());
+        assert!(activity.button_label.is_none());
     }
 
     use crate::discord::models::MAX_FIELD_LEN;

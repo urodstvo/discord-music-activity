@@ -42,6 +42,12 @@ const PRESENCE_TOGGLES: ToggleRow[] = [
     hint: "Показывать обложку, если Discord её поддерживает.",
     testid: "toggle-artwork",
   },
+  {
+    key: "showButton",
+    title: "Кнопка «Открыть в Яндекс Музыке»",
+    hint: "Кнопка-ссылка под активностью; скрывается, если ссылки нет.",
+    testid: "toggle-button",
+  },
 ];
 
 const APP_TOGGLES: ToggleRow[] = [

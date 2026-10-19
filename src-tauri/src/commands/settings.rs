@@ -69,9 +69,7 @@ fn merged(current: &mut AppSettings, partial: &Map<String, Value>) -> Result<(),
         match key.as_str() {
             "presenceEnabled" => merge_bool(&mut current.presence_enabled, value, key)?,
             "showPausedTracks" => merge_bool(&mut current.show_paused_tracks, value, key)?,
-            "showTrackTimestamp" => {
-                merge_bool(&mut current.show_track_timestamp, value, key)?
-            }
+            "showTrackTimestamp" => merge_bool(&mut current.show_track_timestamp, value, key)?,
             "showAlbumArtwork" => merge_bool(&mut current.show_album_artwork, value, key)?,
             "startOnLaunch" => merge_bool(&mut current.start_on_launch, value, key)?,
             "closeToTray" => merge_bool(&mut current.close_to_tray, value, key)?,
@@ -79,9 +77,9 @@ fn merged(current: &mut AppSettings, partial: &Map<String, Value>) -> Result<(),
             "theme" => merge_theme(&mut current.theme, value, key)?,
             "sourceMode" => merge_source_mode(&mut current.source_mode, value, key)?,
             "smtcSourceApp" => merge_smtc_source_app(&mut current.smtc_source_app, value, key)?,
-            "diagnosticsEnabled" => {
-                merge_bool(&mut current.diagnostics_enabled, value, key)?
-            }
+            "diagnosticsEnabled" => merge_bool(&mut current.diagnostics_enabled, value, key)?,
+            // Кнопка под активностью (кастомизация отображения).
+            "showButton" => merge_bool(&mut current.show_button, value, key)?,
             _ => {
                 // Неизвестные настройки игнорируем (не ломаем совместимость).
             }
@@ -139,9 +137,7 @@ fn merge_source_mode(
             *target = crate::config::model::SourceMode::MediaControl;
             Ok(())
         }
-        _ => Err(format!(
-            "{key}: ожидается auto|ynison|media_control"
-        )),
+        _ => Err(format!("{key}: ожидается auto|ynison|media_control")),
     }
 }
 

@@ -55,6 +55,15 @@ Discord. Координатор — единственное место, реш�
   следующий тик его подтверждает; откат к уже опубликованному значению
   (лаг буферизации при промотке) игнорируется.
 
+Отображение статуса (`presence::mapper`, Настройки → «Discord»):
+
+- **Текст фиксирован**: сверху название трека, ниже — «исполнители ·
+  альбом»; отсутствующие части не оставляют висячего разделителя.
+- **На паузе** к строке дописывается «(пауза)».
+- **Управление**: обложка (`showAlbumArtwork`), таймер/прогресс
+  (`showTrackTimestamp`), кнопка-ссылка под активностью (`showButton`;
+  надпись стандартная «Открыть в Яндекс Музыке», URL — https).
+
 Ключевые модули backend (`src-tauri/src/`):
 
 | Модуль | Назначение |
@@ -73,7 +82,7 @@ Discord. Координатор — единственное место, реш�
 | `discord/client.rs` | IPC-адаптер discord-rich-presence, rate limiting |
 | `runtime.rs` | Supervisor: арбитр источников, Discord reset, shutdown |
 | `commands/` | Узкий Tauri API: state/settings/auth/playback/`list_media_sessions` |
-| `config/`, `logging/` | Настройки без секретов (schema v3), ротация логов |
+| `config/`, `logging/` | Настройки без секретов (schema v4), ротация логов |
 
 Исследования протоколов — в `docs/research/` (Ynison handshake, Discord IPC),
 архитектурные решения — `docs/architecture-decisions.md`.
