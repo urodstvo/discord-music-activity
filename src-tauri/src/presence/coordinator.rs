@@ -17,7 +17,6 @@ use tokio::sync::mpsc;
 
 use crate::app_state::{AppSharedState, DiscordStatus};
 use crate::config::model::AppSettings;
-use crate::yandex::errors::ErrorCode;
 use crate::discord::client::{DiscordRpc, MIN_PUBLISH_INTERVAL};
 use crate::discord::models::DiscordActivity;
 use crate::presence::backoff::Backoff;
@@ -25,6 +24,7 @@ use crate::presence::grace::GracePolicy;
 use crate::presence::mapper::map_presence;
 use crate::runtime::CoordinatorEvent;
 use crate::sources::{PlaybackState, PlaybackStatus};
+use crate::yandex::errors::ErrorCode;
 
 /// Debounce быстрых последовательных изменений (ТЗ §6.5: 250–500 мс).
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -196,9 +196,9 @@ impl Coordinator {
             Some(playback) => match playback.status {
                 // Маппер сам решает, публиковать ли Paused/Unknown
                 // (настройка show_paused_tracks) и что делать со Stopped.
-                PlaybackStatus::Playing
-                | PlaybackStatus::Paused
-                | PlaybackStatus::Unknown => map_presence(playback, settings),
+                PlaybackStatus::Playing | PlaybackStatus::Paused | PlaybackStatus::Unknown => {
+                    map_presence(playback, settings)
+                }
                 PlaybackStatus::Stopped => None,
             },
             None => {

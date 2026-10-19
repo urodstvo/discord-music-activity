@@ -78,20 +78,23 @@ pub fn load_settings(path: &Path) -> AppSettings {
 /// Атомарно сохранить настройки: пишем во временный файл и переименовываем.
 pub fn save_settings(path: &Path, settings: &AppSettings) -> AppResult<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string()))?;
+        fs::create_dir_all(parent).map_err(|err| {
+            AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string())
+        })?;
     }
 
     let tmp_path = path.with_extension("json.tmp");
     {
-        let file = fs::File::create(&tmp_path)
-            .map_err(|err| AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string()))?;
+        let file = fs::File::create(&tmp_path).map_err(|err| {
+            AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string())
+        })?;
         let mut writer = std::io::BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, settings)
-            .map_err(|err| AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string()))?;
-        writer
-            .flush()
-            .map_err(|err| AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string()))?;
+        serde_json::to_writer_pretty(&mut writer, settings).map_err(|err| {
+            AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string())
+        })?;
+        writer.flush().map_err(|err| {
+            AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string())
+        })?;
     }
 
     // Атомарный replace на Windows: rename поверх существующего разрешён
@@ -99,8 +102,9 @@ pub fn save_settings(path: &Path, settings: &AppSettings) -> AppResult<()> {
     if path.exists() {
         let _ = fs::remove_file(path);
     }
-    fs::rename(&tmp_path, path)
-        .map_err(|err| AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string()))?;
+    fs::rename(&tmp_path, path).map_err(|err| {
+        AppError::with_details(ErrorCode::SettingsReadWriteError, err.to_string())
+    })?;
 
     Ok(())
 }

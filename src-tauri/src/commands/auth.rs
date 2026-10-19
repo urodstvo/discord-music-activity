@@ -147,8 +147,7 @@ pub async fn start_device_auth(
                         break;
                     }
                     supervisor_owned.on_token_saved(&app_handle);
-                    supervisor_shared
-                        .notify(&app_handle, "info", "Вход через Яндекс выполнен");
+                    supervisor_shared.notify(&app_handle, "info", "Вход через Яндекс выполнен");
                     let _ = app_handle.emit("device-auth-done", serde_json::json!({}));
                     break;
                 }

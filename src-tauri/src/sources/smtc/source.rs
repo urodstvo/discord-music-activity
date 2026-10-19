@@ -42,8 +42,8 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use windows::Media::Control::{
-    GlobalSystemMediaTransportControlsSessionPlaybackStatus,
     GlobalSystemMediaTransportControlsSessionManager,
+    GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
 
 use crate::app_state::AppSharedState;
@@ -113,25 +113,23 @@ pub fn snapshot_sessions_blocking() -> Vec<MediaSessionInfo> {
         Ok(snap) => {
             let current = snap.current_app_id.clone();
             snap.sessions
-            .into_iter()
-            .map(|raw| {
-                let is_current = current
-                    .as_deref()
-                    .is_some_and(|cur| cur == raw.app_id);
-                let computed = map_state(&raw);
-                MediaSessionInfo {
-                    app_id: raw.app_id,
-                    title: raw.title,
-                    artists: raw.artists,
-                    status: raw.status,
-                    position_raw_ms: raw.position_ms,
-                    position_age_ms: raw.position_age_ms,
-                    position_ms: computed.position_ms,
-                    duration_ms: raw.duration_ms,
-                    is_current,
-                }
-            })
-            .collect()
+                .into_iter()
+                .map(|raw| {
+                    let is_current = current.as_deref().is_some_and(|cur| cur == raw.app_id);
+                    let computed = map_state(&raw);
+                    MediaSessionInfo {
+                        app_id: raw.app_id,
+                        title: raw.title,
+                        artists: raw.artists,
+                        status: raw.status,
+                        position_raw_ms: raw.position_ms,
+                        position_age_ms: raw.position_age_ms,
+                        position_ms: computed.position_ms,
+                        duration_ms: raw.duration_ms,
+                        is_current,
+                    }
+                })
+                .collect()
         }
         Err(err) => {
             tracing::debug!("list_media_sessions poll failed: {err}");
@@ -347,20 +345,15 @@ fn is_revert(memo: Option<&EmitMemo>, next: &PlaybackState) -> bool {
     let Some(memo) = memo else {
         return false;
     };
-    next.position_ms
-        .unwrap_or(0)
-        .abs_diff(memo.position_ms)
-        <= REVERT_TOLERANCE_MS
+    next.position_ms.unwrap_or(0).abs_diff(memo.position_ms) <= REVERT_TOLERANCE_MS
 }
 
 /// Мёртвый ли timeline: сырая позиция не меняется подряд тиков при
 /// Playing/Unknown. Пауза/стоп сюда не попадают: там стоящая позиция —
 /// норма, а переходы статусов публикуются как Identity в любом случае.
 fn is_frozen_timeline(stable_polls: u32, status: PlaybackStatus) -> bool {
-    matches!(
-        status,
-        PlaybackStatus::Playing | PlaybackStatus::Unknown
-    ) && stable_polls >= FROZEN_STABLE_POLLS
+    matches!(status, PlaybackStatus::Playing | PlaybackStatus::Unknown)
+        && stable_polls >= FROZEN_STABLE_POLLS
 }
 
 /// Характер отличия нового состояния от опубликованного.
@@ -517,19 +510,20 @@ fn select_session<'a>(
     current: Option<&str>,
 ) -> Option<&'a RawSession> {
     if let Some(app) = sticky {
-        if let Some(found) = sessions.iter().find(|s| !s.app_id.is_empty() && s.app_id == app) {
+        if let Some(found) = sessions
+            .iter()
+            .find(|s| !s.app_id.is_empty() && s.app_id == app)
+        {
             return Some(found);
         }
     }
-    sessions
-        .iter()
-        .min_by_key(|s| {
-            (
-                u8::from(is_browser(&s.app_id)),
-                u8::from(s.status != PlaybackStatus::Playing),
-                u8::from(current != Some(s.app_id.as_str())),
-            )
-        })
+    sessions.iter().min_by_key(|s| {
+        (
+            u8::from(is_browser(&s.app_id)),
+            u8::from(s.status != PlaybackStatus::Playing),
+            u8::from(current != Some(s.app_id.as_str())),
+        )
+    })
 }
 
 /// Результат одного опроса SMTC: сессии + «текущая» сессия по мнению ОС.
@@ -589,7 +583,10 @@ fn read_session(
         .Artist()
         .map(|a| split_artists(&a.to_string()))
         .unwrap_or_default();
-    let album = props.AlbumTitle().map(|v| v.to_string()).unwrap_or_default();
+    let album = props
+        .AlbumTitle()
+        .map(|v| v.to_string())
+        .unwrap_or_default();
 
     let timeline = session.GetTimelineProperties()?;
     // Позиция timeline — смещение от StartTime (как в WinYandexMusicRPC:
@@ -724,7 +721,9 @@ mod tests {
     fn timespan_conversion() {
         // 3 секунды = 30_000_000 тиков (по 100 нс).
         assert_eq!(
-            timespan_ms(windows::Foundation::TimeSpan { Duration: 30_000_000 }),
+            timespan_ms(windows::Foundation::TimeSpan {
+                Duration: 30_000_000
+            }),
             Some(3_000)
         );
         assert_eq!(
@@ -752,7 +751,10 @@ mod tests {
     #[test]
     fn same_track_progress_not_published() {
         let now = Instant::now();
-        let prev = EmitMemo::snapshot(&state(PlaybackStatus::Playing, "Track", 0), now - Duration::from_millis(3_000));
+        let prev = EmitMemo::snapshot(
+            &state(PlaybackStatus::Playing, "Track", 0),
+            now - Duration::from_millis(3_000),
+        );
         let next = state(PlaybackStatus::Playing, "Track", 3_000);
         assert_eq!(
             classify_change(Some(&prev), &next, now),
@@ -772,7 +774,10 @@ mod tests {
     #[test]
     fn unexplained_seek_needs_confirm() {
         let now = Instant::now();
-        let prev = EmitMemo::snapshot(&state(PlaybackStatus::Playing, "Track", 0), now - Duration::from_millis(1_000));
+        let prev = EmitMemo::snapshot(
+            &state(PlaybackStatus::Playing, "Track", 0),
+            now - Duration::from_millis(1_000),
+        );
         let next = state(PlaybackStatus::Playing, "Track", 60_000);
         assert_eq!(
             classify_change(Some(&prev), &next, now),
@@ -788,7 +793,10 @@ mod tests {
         let now = Instant::now();
         let mut next = state(PlaybackStatus::Playing, "Track", 3_000);
         next.artists = vec!["B".into()];
-        let prev = EmitMemo::snapshot(&state(PlaybackStatus::Playing, "Track", 0), now - Duration::from_millis(3_000));
+        let prev = EmitMemo::snapshot(
+            &state(PlaybackStatus::Playing, "Track", 0),
+            now - Duration::from_millis(3_000),
+        );
         assert_eq!(classify_change(Some(&prev), &next, now), Change::Identity);
     }
 
@@ -894,8 +902,7 @@ mod tests {
 
     #[test]
     fn select_prefers_desktop_app_over_browser() {
-        let browser =
-            vec![raw("Chrome.exe", PlaybackStatus::Playing, "Video", 5_000)];
+        let browser = vec![raw("Chrome.exe", PlaybackStatus::Playing, "Video", 5_000)];
         assert_eq!(
             select_session(&browser, None, None).map(|s| s.app_id.as_str()),
             Some("Chrome.exe"),

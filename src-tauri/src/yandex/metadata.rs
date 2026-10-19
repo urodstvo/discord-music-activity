@@ -178,9 +178,8 @@ impl MetadataClient {
 
     /// HTTP запрос к каталогу.
     async fn fetch(&self, track_id: &str) -> AppResult<Option<TrackMetadata>> {
-        let url = Url::parse("https://api.music.yandex.ru/tracks").map_err(|err| {
-            AppError::with_details(ErrorCode::Internal, err.to_string())
-        })?;
+        let url = Url::parse("https://api.music.yandex.ru/tracks")
+            .map_err(|err| AppError::with_details(ErrorCode::Internal, err.to_string()))?;
 
         let response = self
             .http
@@ -279,9 +278,7 @@ pub fn build_https_cover(template: &str) -> Option<Url> {
     }
     if !url
         .host_str()
-        .map(|h| {
-            ["avatars.yandex.net", "avatars.mds.yandex.net"].contains(&h)
-        })
+        .map(|h| ["avatars.yandex.net", "avatars.mds.yandex.net"].contains(&h))
         .unwrap_or(false)
     {
         return None;

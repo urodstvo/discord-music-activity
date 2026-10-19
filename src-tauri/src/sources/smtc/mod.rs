@@ -10,4 +10,4 @@
 pub mod helpers;
 pub mod source;
 
-pub use source::{snapshot_sessions_blocking, spawn_smtc_source, MediaSessionInfo};
+pub use source::{MediaSessionInfo, snapshot_sessions_blocking, spawn_smtc_source};

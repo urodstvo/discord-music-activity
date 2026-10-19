@@ -177,12 +177,7 @@ impl Arbiter {
     }
 
     /// Активный источник ушёл — освободить публикацию.
-    fn release_active(
-        &self,
-        kind: SourceKind,
-        state: &mut ArbiterState,
-        app: &tauri::AppHandle,
-    ) {
+    fn release_active(&self, kind: SourceKind, state: &mut ArbiterState, app: &tauri::AppHandle) {
         if state.active == Some(kind) {
             state.active = None;
             self.shared.set_active_source(None, app);
@@ -190,11 +185,7 @@ impl Arbiter {
     }
 
     /// Допустим ли источник к публикации в текущий момент.
-    fn eligible_incoming(
-        kind: SourceKind,
-        state: &ArbiterState,
-        mode: SourceMode,
-    ) -> bool {
+    fn eligible_incoming(kind: SourceKind, state: &ArbiterState, mode: SourceMode) -> bool {
         let source_alive = match kind {
             SourceKind::Ynison => state.ynison.is_some(),
             SourceKind::MediaControl => state.smtc.is_some(),
@@ -218,15 +209,14 @@ impl Arbiter {
 
     /// Обработка события от источника. Возвращает true, если после
     /// обработки нужно пересчитать подмножество источников.
-    fn on_source_event(
-        &self,
-        event: SourceEvent,
-        app: &tauri::AppHandle,
-    ) -> bool {
+    fn on_source_event(&self, event: SourceEvent, app: &tauri::AppHandle) -> bool {
         let mut state = self.state.lock().expect("арбитр доступен");
         let mode = self.shared.settings().source_mode;
         match event {
-            SourceEvent::State { kind, state: playback } => {
+            SourceEvent::State {
+                kind,
+                state: playback,
+            } => {
                 if !Self::eligible_incoming(kind, &state, mode) {
                     tracing::debug!("события {:?} подавлены арбитром", kind);
                     return false;
@@ -346,13 +336,7 @@ impl Supervisor {
             }
         });
 
-        (
-            Self {
-                shared,
-                arbiter,
-            },
-            coordinator_rx,
-        )
+        (Self { shared, arbiter }, coordinator_rx)
     }
 
     /// Записать факт наличия токена в хранилище и пересчитать источники
@@ -419,7 +403,10 @@ impl Supervisor {
     pub fn reconnect_discord(&self, app: &tauri::AppHandle) {
         self.shared
             .set_discord_status(DiscordStatus::Connecting, app);
-        let _ = self.arbiter.coordinator_tx.send(CoordinatorEvent::DiscordReset);
+        let _ = self
+            .arbiter
+            .coordinator_tx
+            .send(CoordinatorEvent::DiscordReset);
     }
 
     /// Полная остановка всех фоновых задач (ТЗ §6.4: quit/logout).

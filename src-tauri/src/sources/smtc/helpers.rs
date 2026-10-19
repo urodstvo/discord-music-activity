@@ -22,11 +22,11 @@
 
 use std::time::{Duration, Instant};
 
-use windows::core::{Error, HRESULT, Result, RuntimeType};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
+use windows::core::{Error, HRESULT, Result, RuntimeType};
 use windows_future::{AsyncStatus, IAsyncOperation};
 
 /// Общий срок на всю SMTC-сверку (COM-вызовы идут цепочкой).
@@ -35,10 +35,7 @@ pub const SMTC_TOTAL_TIMEOUT_MS: u64 = 2_000;
 /// Блокирующее ожидание WinRT async-операции (у windows-future нет
 /// блокирующего `get`): poll `Status` отдаёт результат из `GetResults`.
 /// По таймауту операция отменяется — поток не зависает навсегда.
-pub fn await_smtc<T: RuntimeType + Clone>(
-    op: IAsyncOperation<T>,
-    deadline: Instant,
-) -> Result<T> {
+pub fn await_smtc<T: RuntimeType + Clone>(op: IAsyncOperation<T>, deadline: Instant) -> Result<T> {
     loop {
         match op.Status() {
             Ok(AsyncStatus::Completed) => return op.GetResults(),

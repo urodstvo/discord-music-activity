@@ -10,9 +10,9 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::sources::{PlaybackState, PlaybackStatus};
 use serde::Deserialize;
 use url::Url;
-use crate::sources::{PlaybackState, PlaybackStatus};
 
 /// Maximum raw frame size we are willing to keep in memory (64 MiB, mirroring
 /// the reference clients — frames are quasi-full snapshots and stay small).
@@ -390,11 +390,13 @@ mod tests {
         assert_eq!(state.title.as_deref(), Some("Track 1"));
         assert_eq!(state.position_ms, Some(60_000));
         assert!(state.cover_url.is_some());
-        assert!(state
-            .track_url
-            .as_ref()
-            .map(|u| u.as_str().contains("music.yandex.ru/track/"))
-            .unwrap_or(false));
+        assert!(
+            state
+                .track_url
+                .as_ref()
+                .map(|u| u.as_str().contains("music.yandex.ru/track/"))
+                .unwrap_or(false)
+        );
     }
 
     #[test]
@@ -404,7 +406,11 @@ mod tests {
         let frame = parse_frame(&frame).unwrap();
         let state = normalize(&frame, now()).unwrap();
         assert_eq!(state.status, PlaybackStatus::Paused);
-        assert_eq!(state.position_ms, Some(30_000), "пауза замораживает позицию");
+        assert_eq!(
+            state.position_ms,
+            Some(30_000),
+            "пауза замораживает позицию"
+        );
     }
 
     #[test]

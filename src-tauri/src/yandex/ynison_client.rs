@@ -17,19 +17,19 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tokio_util::sync::CancellationToken;
 
 use crate::app_state::{AppSharedState, YnisonStatus};
 use crate::config::persistence::load_or_create_device_id;
 use crate::presence::backoff::Backoff;
+use crate::sources::PlaybackState;
 use crate::yandex::errors::{AppError, AppResult, ErrorCode};
 use crate::yandex::metadata::MetadataClient;
-use crate::sources::PlaybackState;
-use crate::yandex::protocol::{normalize, parse_frame, MAX_FRAME_BYTES};
+use crate::yandex::protocol::{MAX_FRAME_BYTES, normalize, parse_frame};
 
 /// Базовый URL redirect-сервиса.
 pub const REDIRECT_URL: &str =
@@ -57,7 +57,11 @@ pub struct RedirectInfo {
 }
 
 /// Первое не-null значение по двум возможным именам поля.
-fn field<'a>(json: &'a serde_json::Value, camel: &str, snake: &str) -> Option<&'a serde_json::Value> {
+fn field<'a>(
+    json: &'a serde_json::Value,
+    camel: &str,
+    snake: &str,
+) -> Option<&'a serde_json::Value> {
     let value = json.get(camel).filter(|v| !v.is_null());
     value.or_else(|| json.get(snake).filter(|v| !v.is_null()))
 }
@@ -119,10 +123,8 @@ impl RedirectInfo {
             .as_object()
             .and_then(|obj| {
                 Self::param_u64(obj, &["keepAliveTimeSeconds", "intervalSeconds"]).or_else(|| {
-                    Self::param_u64(obj, &["keepAliveTimeoutSeconds"]).or_else(|| {
-                        Self::param_u64(obj, &["intervalMillis"])
-                            .map(|m| m / 1000)
-                    })
+                    Self::param_u64(obj, &["keepAliveTimeoutSeconds"])
+                        .or_else(|| Self::param_u64(obj, &["intervalMillis"]).map(|m| m / 1000))
                 })
             })
             .unwrap_or(DEFAULT_KEEPALIVE_SECS)
@@ -141,21 +143,24 @@ fn build_request(
         tracing::warn!("ws URL invalid: {err}");
         AppError::new(ErrorCode::YandexUnavailable)
     })?;
-    request
-        .headers_mut()
-        .insert("Origin", HeaderValue::from_static("https://music.yandex.ru"));
+    request.headers_mut().insert(
+        "Origin",
+        HeaderValue::from_static("https://music.yandex.ru"),
+    );
     let auth_value = format!("OAuth {}", token.trim());
     request.headers_mut().insert(
         "Authorization",
-        HeaderValue::from_str(&auth_value)
-            .map_err(|_| AppError::with_details(ErrorCode::InvalidToken, "токен невалидного формата"))?,
+        HeaderValue::from_str(&auth_value).map_err(|_| {
+            AppError::with_details(ErrorCode::InvalidToken, "токен невалидного формата")
+        })?,
     );
 
     let protocols = subprotocols.join(", ");
     request.headers_mut().insert(
         "Sec-WebSocket-Protocol",
-        HeaderValue::from_str(&protocols)
-            .map_err(|err| AppError::with_details(ErrorCode::YnisonProtocolChanged, err.to_string()))?,
+        HeaderValue::from_str(&protocols).map_err(|err| {
+            AppError::with_details(ErrorCode::YnisonProtocolChanged, err.to_string())
+        })?,
     );
     Ok(request)
 }
@@ -175,16 +180,22 @@ async fn fetch_redirect(token: &str) -> AppResult<RedirectInfo> {
 
     let raw = tokio::time::timeout(HANDSHAKE_TIMEOUT, socket.next())
         .await
-        .map_err(|_| AppError::with_details(ErrorCode::YandexUnavailable, "redirect frame timeout"))?
+        .map_err(|_| {
+            AppError::with_details(ErrorCode::YandexUnavailable, "redirect frame timeout")
+        })?
         .ok_or_else(|| AppError::with_details(ErrorCode::YandexUnavailable, "redirect closed"))?
         .map_err(|err| {
-            AppError::with_details(ErrorCode::YandexUnavailable, format!("redirect read: {err}"))
+            AppError::with_details(
+                ErrorCode::YandexUnavailable,
+                format!("redirect read: {err}"),
+            )
         })?;
     let _ = socket.close(None).await;
 
     let info: RedirectInfo = match raw {
         Message::Text(text) => {
-            let json: serde_json::Value = serde_json::from_str(&text).map_err(bad_redirect_frame)?;
+            let json: serde_json::Value =
+                serde_json::from_str(&text).map_err(bad_redirect_frame)?;
             RedirectInfo::parse(&json)?
         }
         Message::Binary(bytes) => {
@@ -196,15 +207,10 @@ async fn fetch_redirect(token: &str) -> AppResult<RedirectInfo> {
             return Err(AppError::with_details(
                 ErrorCode::YnisonProtocolChanged,
                 "unexpected redirect frame".to_string(),
-            ))
+            ));
         }
     };
-    if info
-        .host
-        .as_ref()
-        .map(|h| h.is_empty())
-        .unwrap_or(true)
-    {
+    if info.host.as_ref().map(|h| h.is_empty()).unwrap_or(true) {
         return Err(AppError::with_details(
             ErrorCode::YnisonProtocolChanged,
             "redirect host missing".to_string(),
@@ -388,7 +394,9 @@ pub fn spawn_ynison_client(
             if ctx.shutdown.is_cancelled() {
                 ctx.shared
                     .set_ynison_status(YnisonStatus::Disconnected, &ctx.app_handle);
-                let _ = ctx.events.send(SourceEvent::Stopped { kind: SourceKind::Ynison });
+                let _ = ctx.events.send(SourceEvent::Stopped {
+                    kind: SourceKind::Ynison,
+                });
                 return;
             }
             ctx.shared
@@ -398,14 +406,14 @@ pub fn spawn_ynison_client(
                 SessionResult::Stopped => {
                     ctx.shared
                         .set_ynison_status(YnisonStatus::Disconnected, &ctx.app_handle);
-                    let _ = ctx.events.send(SourceEvent::Stopped { kind: SourceKind::Ynison });
+                    let _ = ctx.events.send(SourceEvent::Stopped {
+                        kind: SourceKind::Ynison,
+                    });
                     return;
                 }
                 SessionResult::AuthRequired => {
-                    ctx.shared.set_ynison_status(
-                        YnisonStatus::AuthenticationRequired,
-                        &ctx.app_handle,
-                    );
+                    ctx.shared
+                        .set_ynison_status(YnisonStatus::AuthenticationRequired, &ctx.app_handle);
                     let _ = ctx.events.send(SourceEvent::RequiresAuth);
                     let _ = ctx.events.send(SourceEvent::State {
                         kind: SourceKind::Ynison,
@@ -472,28 +480,24 @@ async fn run_session(
     };
     let url = format!("wss://{host}/ynison_state.YnisonStateService/PutYnisonState");
     let state_sub = device_data_subprotocol(Some(&redirect));
-    let request = match build_request(
-        &url,
-        &ctx.token,
-        &["Bearer", "v2", state_sub.as_str()],
-    ) {
+    let request = match build_request(&url, &ctx.token, &["Bearer", "v2", state_sub.as_str()]) {
         Ok(req) => req,
         Err(err) => return classify_session_error(err),
     };
 
     let connect_future = connect_async(request);
-    let (mut socket, _response) = match tokio::time::timeout(HANDSHAKE_TIMEOUT, connect_future).await
-    {
-        Ok(Ok(output)) => output,
-        Ok(Err(err)) => return classify_session_error(map_connect_error(err)),
-        Err(_) => {
-            tracing::warn!("ws handshake failed: state timeout");
-            return classify_session_error(AppError::with_details(
-                ErrorCode::YandexUnavailable,
-                "state handshake timeout",
-            ));
-        }
-    };
+    let (mut socket, _response) =
+        match tokio::time::timeout(HANDSHAKE_TIMEOUT, connect_future).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(err)) => return classify_session_error(map_connect_error(err)),
+            Err(_) => {
+                tracing::warn!("ws handshake failed: state timeout");
+                return classify_session_error(AppError::with_details(
+                    ErrorCode::YandexUnavailable,
+                    "state handshake timeout",
+                ));
+            }
+        };
 
     // Регистрация устройства.
     if let Err(err) = socket.send(Message::text(register_message())).await {
@@ -520,8 +524,7 @@ async fn message_loop(
     backoff: &mut Backoff,
 ) -> SessionResult {
     let started = std::time::Instant::now();
-    let mut ping_interval =
-        tokio::time::interval(Duration::from_secs(keepalive_secs.max(1)));
+    let mut ping_interval = tokio::time::interval(Duration::from_secs(keepalive_secs.max(1)));
     // Первый tick у interval срабатывает моментально — пропускаем его.
     ping_interval.tick().await;
     let mut first_frame_logged = false;
@@ -535,7 +538,10 @@ async fn message_loop(
         if !backoff_reset && started.elapsed() >= BACKOFF_RESET_AFTER {
             backoff.reset();
             backoff_reset = true;
-            tracing::info!("Ynison: сессия стабильна ({} c), backoff сброшен", BACKOFF_RESET_AFTER.as_secs());
+            tracing::info!(
+                "Ynison: сессия стабильна ({} c), backoff сброшен",
+                BACKOFF_RESET_AFTER.as_secs()
+            );
         }
         tokio::select! {
             _ = ctx.shutdown.cancelled() => {
@@ -683,7 +689,10 @@ fn safe_frame_summary(json: &serde_json::Value) -> String {
                     serde_json::Value::String(s) => s.parse().ok(),
                     _ => None,
                 });
-            let list_len = list.and_then(|l| l.as_array()).map(|a| a.len()).unwrap_or(0);
+            let list_len = list
+                .and_then(|l| l.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
             let title = list
                 .and_then(|l| l.as_array())
                 .and_then(|a| {
@@ -743,13 +752,13 @@ fn deliver_state(ctx: &ClientContext, state: Option<PlaybackState>) {
 }
 
 /// Разбор одного сообщения. Возвращает нормализованное состояние.
-async fn dispatch_frame(
-    text: &str,
-    metadata: &MetadataClient,
-) -> AppResult<Option<PlaybackState>> {
+async fn dispatch_frame(text: &str, metadata: &MetadataClient) -> AppResult<Option<PlaybackState>> {
     // ВАЖНО: никогда не логируем текст кадра (личные данные).
     let json: serde_json::Value = serde_json::from_str(text).map_err(|err| {
-        AppError::with_details(ErrorCode::YnisonProtocolChanged, format!("frame parse: {err}"))
+        AppError::with_details(
+            ErrorCode::YnisonProtocolChanged,
+            format!("frame parse: {err}"),
+        )
     })?;
 
     // Ошибки grpc по спецификации (исследование: JSON кадры ошибки выглядят
@@ -779,10 +788,7 @@ async fn dispatch_frame(
             .to_owned();
         // Текст ошибки сервера не содержит наших секретов — логируем:
         // он указывает, какой именно аргумент отклонён (grpc 3).
-        let message = err_obj
-            .get("message")
-            .and_then(|m| m.as_str())
-            .to_owned();
+        let message = err_obj.get("message").and_then(|m| m.as_str()).to_owned();
         tracing::warn!(
             "Ynison error frame: grpcCode={grpc:?} httpCode={http:?} yms={yms:?} message={message:?}"
         );
@@ -895,12 +901,18 @@ fn is_frame_paused(frame: &crate::yandex::protocol::YnisonFrame) -> bool {
 /// нормализации), а не `first()`: иначе SMTC-сверка может сравнивать не тот
 /// трек, когда очередь сдвинулась.
 fn active_playable_title(frame: &crate::yandex::protocol::YnisonFrame) -> Option<String> {
-    let queue = frame
-        .player_queue
-        .as_ref()
-        .or_else(|| frame.player_state.as_ref().and_then(|s| s.player_queue.as_ref()))?;
+    let queue = frame.player_queue.as_ref().or_else(|| {
+        frame
+            .player_state
+            .as_ref()
+            .and_then(|s| s.player_queue.as_ref())
+    })?;
     let list = queue.playable_list.as_ref()?;
-    let playable = match queue.current_playable_index.as_ref().and_then(|v| v.as_i64()) {
+    let playable = match queue
+        .current_playable_index
+        .as_ref()
+        .and_then(|v| v.as_i64())
+    {
         Some(index) if index >= 0 => list.get(usize::try_from(index).ok()?)?,
         Some(_) => return None, // отрицательный индекс = очередь пуста
         None => list.first()?,
@@ -1046,14 +1058,14 @@ mod tests {
         assert!(blob.starts_with("%7B"), "открывается percent-encoded");
         for c in blob.chars() {
             assert!(
-                c.is_ascii_alphanumeric()
-                    || "-_~.()*%$!'|+".contains(c),
+                c.is_ascii_alphanumeric() || "-_~.()*%$!'|+".contains(c),
                 "недопустимый символ в subprotocol: {c}"
             );
         }
         // Декодируемся обратно в валидный JSON.
         let bytes = percent_decode_for_test(&blob);
-        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("должен декодироваться");
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("должен декодироваться");
         assert!(json.get("Ynison-Device-Id").is_some());
         assert!(json["Ynison-Device-Info"].is_string());
     }
@@ -1061,7 +1073,11 @@ mod tests {
     #[test]
     fn device_id_is_stable_hex12() {
         let id = device_id();
-        assert_eq!(id.len(), 12, "канонические reference-клиенты шлют 12–16 hex");
+        assert_eq!(
+            id.len(),
+            12,
+            "канонические reference-клиенты шлют 12–16 hex"
+        );
         assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));
         assert_eq!(id, device_id(), "device id стабилен");
     }
@@ -1076,7 +1092,10 @@ mod tests {
         assert_eq!(full["device"]["info"]["type"], "WEB");
         assert_eq!(full["device"]["info"]["app_name"], "yandex-music");
         assert_eq!(full["device"]["capabilities"]["can_be_player"], false);
-        assert_eq!(full["device"]["capabilities"]["can_be_remote_controller"], true);
+        assert_eq!(
+            full["device"]["capabilities"]["can_be_remote_controller"],
+            true
+        );
         assert_eq!(full["device"]["volume_info"]["volume"], 0.0);
         assert_eq!(full["player_state"]["status"]["paused"], true);
         assert_eq!(full["player_state"]["status"]["playback_speed"], 1.0);
@@ -1087,7 +1106,10 @@ mod tests {
         assert_eq!(queue["current_playable_index"], -1);
         assert_eq!(queue["options"]["repeat_mode"], "NONE");
         assert_eq!(json["player_action_timestamp_ms"], 0);
-        assert_eq!(json["activity_interception_type"], "DO_NOT_INTERCEPT_BY_DEFAULT");
+        assert_eq!(
+            json["activity_interception_type"],
+            "DO_NOT_INTERCEPT_BY_DEFAULT"
+        );
     }
 
     fn percent_decode_for_test(input: &str) -> Vec<u8> {

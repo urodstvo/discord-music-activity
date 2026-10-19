@@ -19,8 +19,8 @@ mod yandex;
 
 use std::sync::Arc;
 
-use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
+use tauri::tray::TrayIconBuilder;
 
 use crate::app_state::AppSharedState;
 use crate::config::persistence::{load_settings, save_settings, settings_path};
@@ -93,11 +93,7 @@ pub fn run() {
             // Tray (ТЗ §9.5).
             let menu = tray::build_menu(app.handle(), settings.presence_enabled)?;
             TrayIconBuilder::with_id(tray::TRAY_ID)
-                .icon(
-                    app.default_window_icon()
-                        .expect("иконка задана")
-                        .clone(),
-                )
+                .icon(app.default_window_icon().expect("иконка задана").clone())
                 .menu(&menu)
                 .tooltip("Яндекс Музыка → Discord")
                 .on_menu_event(|app, event| {
@@ -152,8 +148,7 @@ pub fn run() {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     // ТЗ §9.5: закрытие окна при closeToTray сворачивает в трей.
                     let app = window.app_handle();
-                    let close_to_tray =
-                        app.state::<Supervisor>().shared().settings().close_to_tray;
+                    let close_to_tray = app.state::<Supervisor>().shared().settings().close_to_tray;
                     if close_to_tray {
                         api.prevent_close();
                         let _ = window.hide();
@@ -169,8 +164,11 @@ pub fn run() {
                 // в трей: окно скрывается, процесс продолжает работать.
                 tauri::WindowEvent::Resized(_) => {
                     let app = window.app_handle();
-                    let minimize_to_tray =
-                        app.state::<Supervisor>().shared().settings().minimize_to_tray;
+                    let minimize_to_tray = app
+                        .state::<Supervisor>()
+                        .shared()
+                        .settings()
+                        .minimize_to_tray;
                     if minimize_to_tray && window.is_minimized().unwrap_or(false) {
                         let _ = window.hide();
                     }

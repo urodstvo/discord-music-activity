@@ -12,7 +12,10 @@ pub const MENU_QUIT: &str = "quit";
 pub const TRAY_ID: &str = "main";
 
 /// Построить меню tray в соответствии с текущим состоянием публикации.
-pub fn build_menu(app: &AppHandle, presence_enabled: bool) -> tauri::Result<tauri::menu::Menu<Wry>> {
+pub fn build_menu(
+    app: &AppHandle,
+    presence_enabled: bool,
+) -> tauri::Result<tauri::menu::Menu<Wry>> {
     let toggle_label = if presence_enabled {
         "Публикация: выключить"
     } else {

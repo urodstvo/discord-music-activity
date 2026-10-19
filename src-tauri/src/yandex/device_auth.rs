@@ -100,21 +100,26 @@ pub async fn request_device_code() -> AppResult<(DeviceCodeInfo, String)> {
         tracing::warn!("device/code: HTTP {}", response.status());
         return Err(map_device_code_status(response.status().as_u16()));
     }
-    let raw: DeviceCodeResponse = response
-        .json()
-        .await
-        .map_err(|_| AppError::with_details(ErrorCode::YandexUnavailable, "device/code bad json"))?;
+    let raw: DeviceCodeResponse = response.json().await.map_err(|_| {
+        AppError::with_details(ErrorCode::YandexUnavailable, "device/code bad json")
+    })?;
     parse_device_code_response(raw)
 }
 
 /// Разобрать ответ `/device/code` в пару (инфо для UI, код для опроса).
 fn parse_device_code_response(raw: DeviceCodeResponse) -> AppResult<(DeviceCodeInfo, String)> {
-    let device_code = raw.device_code.filter(|s| !s.trim().is_empty()).ok_or_else(|| {
-        AppError::with_details(ErrorCode::YandexUnavailable, "device/code без device_code")
-    })?;
-    let user_code = raw.user_code.filter(|s| !s.trim().is_empty()).ok_or_else(|| {
-        AppError::with_details(ErrorCode::YandexUnavailable, "device/code без user_code")
-    })?;
+    let device_code = raw
+        .device_code
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            AppError::with_details(ErrorCode::YandexUnavailable, "device/code без device_code")
+        })?;
+    let user_code = raw
+        .user_code
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            AppError::with_details(ErrorCode::YandexUnavailable, "device/code без user_code")
+        })?;
     let verification_url = raw
         .verification_url
         .or(raw.verification_uri)
@@ -163,12 +168,14 @@ pub async fn poll_device_token_once(device_code: &str) -> AppResult<PollOutcome>
 /// Чистая функция разбора ответа опроса — покрыта unit-тестами без сети.
 fn parse_token_poll_body(status: u16, body: &str) -> AppResult<PollOutcome> {
     if status == 200 {
-        let ok: TokenSuccess = serde_json::from_str(body).map_err(|_| {
-            AppError::with_details(ErrorCode::YandexUnavailable, "token bad json")
-        })?;
-        let token = ok.access_token.filter(|s| !s.trim().is_empty()).ok_or_else(|| {
-            AppError::with_details(ErrorCode::YandexUnavailable, "token без access_token")
-        })?;
+        let ok: TokenSuccess = serde_json::from_str(body)
+            .map_err(|_| AppError::with_details(ErrorCode::YandexUnavailable, "token bad json"))?;
+        let token = ok
+            .access_token
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| {
+                AppError::with_details(ErrorCode::YandexUnavailable, "token без access_token")
+            })?;
         return Ok(PollOutcome::Authorized(token));
     }
     // Ошибка OAuth: смотрим поле `error`.
@@ -244,7 +251,10 @@ mod tests {
             PollOutcome::Pending
         );
         let slow = r#"{"error":"slow_down"}"#;
-        assert_eq!(parse_token_poll_body(400, slow).unwrap(), PollOutcome::Pending);
+        assert_eq!(
+            parse_token_poll_body(400, slow).unwrap(),
+            PollOutcome::Pending
+        );
     }
 
     #[test]

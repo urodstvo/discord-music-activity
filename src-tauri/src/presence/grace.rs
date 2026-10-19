@@ -24,7 +24,9 @@ impl Default for GracePolicy {
 impl GracePolicy {
     /// Целевой grace период (§6.6).
     pub fn standard() -> Self {
-        Self { duration: GRACE_PERIOD }
+        Self {
+            duration: GRACE_PERIOD,
+        }
     }
 
     /// Определить, нужно ли очистить Presence: если последнее валидное

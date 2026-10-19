@@ -60,19 +60,16 @@ fn reqwest_client() -> reqwest::Client {
 /// Сохранить токен в системное хранилище. Регистрируем секрет как «sensitive»,
 /// чтобы любая случайная попытка вывода была замаскирована.
 pub fn save_token(token: &str) -> AppResult<()> {
-    let entry = Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_USER)
-        .map_err(|err| map_store_error(err))?;
-    entry
-        .set_password(token.trim())
-        .map_err(map_store_error)?;
+    let entry =
+        Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_USER).map_err(|err| map_store_error(err))?;
+    entry.set_password(token.trim()).map_err(map_store_error)?;
     SensitiveGuard::register_secret(token.trim().to_owned());
     Ok(())
 }
 
 /// Прочитать токен из системного хранилища. `Ok(None)` — записи нет.
 pub fn load_token() -> AppResult<Option<String>> {
-    let entry = Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_USER)
-        .map_err(map_store_error)?;
+    let entry = Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_USER).map_err(map_store_error)?;
     match entry.get_password() {
         Ok(token) => {
             SensitiveGuard::register_secret(token.clone());
@@ -85,11 +82,9 @@ pub fn load_token() -> AppResult<Option<String>> {
 
 /// Удалить токен из системного хранилища и из списка чувствительных.
 pub fn delete_token() -> AppResult<()> {
-    let entry = Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_USER)
-        .map_err(map_store_error)?;
+    let entry = Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_USER).map_err(map_store_error)?;
     match entry.delete_credential() {
-        Ok(())
-        | Err(keyring::Error::NoEntry) => {}
+        Ok(()) | Err(keyring::Error::NoEntry) => {}
         Err(err) => return Err(map_store_error(err)),
     }
     SensitiveGuard::clear_secrets();
@@ -113,7 +108,13 @@ mod tests {
     #[test]
     fn empty_token_rejected_immediately() {
         let result = tokio_block(validate_token("   "));
-        assert!(matches!(result, Err(AppError { code: ErrorCode::NoToken, .. })));
+        assert!(matches!(
+            result,
+            Err(AppError {
+                code: ErrorCode::NoToken,
+                ..
+            })
+        ));
     }
 
     // Вспомогательный блок run, чтобы не включать сетевые вызовы в тесты

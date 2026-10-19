@@ -94,7 +94,10 @@ impl serde::Serialize for AppError {
 
 impl AppError {
     pub fn new(code: ErrorCode) -> Self {
-        Self { code, details: None }
+        Self {
+            code,
+            details: None,
+        }
     }
 
     pub fn with_details(code: ErrorCode, details: impl Into<String>) -> Self {

@@ -11,9 +11,9 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
+use discord_rich_presence::{DiscordIpc, DiscordIpcClient, activity};
 
-use crate::discord::errors::{from_ipc_error, Result};
+use crate::discord::errors::{Result, from_ipc_error};
 use crate::discord::models::DiscordActivity;
 use crate::yandex::errors::ErrorCode;
 
@@ -81,8 +81,8 @@ impl DiscordRpc {
 
     /// Опубликовать Activity.
     pub fn publish(&mut self, input: &DiscordActivity) -> Result<()> {
-        let mut payload = activity::Activity::new()
-            .activity_type(activity::ActivityType::Listening);
+        let mut payload =
+            activity::Activity::new().activity_type(activity::ActivityType::Listening);
 
         if let Some(details) = input.details.as_deref() {
             payload = payload.details(details);
@@ -111,13 +111,10 @@ impl DiscordRpc {
             payload = payload.assets(assets);
         }
         if let (Some(label), Some(url)) = (input.button_label.clone(), input.button_url.clone()) {
-            payload =
-                payload.buttons(vec![activity::Button::new(label, url)]);
+            payload = payload.buttons(vec![activity::Button::new(label, url)]);
         }
 
-        self.client
-            .set_activity(payload)
-            .map_err(from_ipc_error)?;
+        self.client.set_activity(payload).map_err(from_ipc_error)?;
         self.register_publish();
         Ok(())
     }
