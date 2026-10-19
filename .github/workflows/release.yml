@@ -1,0 +1,65 @@
+name: Release
+
+# Релиз по git-тегу vX.Y.Z (например v0.6.0).
+# Тег должен совпадать с версией в package.json,
+# src-tauri/tauri.conf.json и src-tauri/Cargo.toml.
+# Создаёт DRAFT-релиз с подписанными NSIS-артефактами + latest.json
+# для tauri-plugin-updater.
+#
+# Нужные Secrets репозитория:
+#   TAURI_SIGNING_PRIVATE_KEY          — приватный minisign-ключ апдейтера
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD — пароль ключа (может быть пустым,
+#                                        если ключ без пароля — тогда секрет
+#                                        можно не задавать)
+#   DISCORD_APPLICATION_ID             — Application ID Discord (нужен
+#                                        release-сборке, см. build.rs)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Сборка и draft-релиз (Windows)
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Проверка совпадения тега и версий
+        run: node scripts/check-versions.mjs --tag ${{ github.ref_name }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Сборка Tauri + публикация draft-релиза
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          DISCORD_APPLICATION_ID: ${{ secrets.DISCORD_APPLICATION_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Yandex Music Presence ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
+          args: --bundles nsis

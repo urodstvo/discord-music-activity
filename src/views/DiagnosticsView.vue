@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import appStore from "../stores/appStore";
 import type { DiagnosticsReport } from "../types/app";
 import { DISCORD_LABELS, YNISON_LABELS } from "../types/app";
+import {
+  checkForUpdates,
+  downloadAndInstallUpdate,
+  initialUpdaterState,
+} from "../lib/updater";
 
 const report = ref<DiagnosticsReport | null>(null);
+const updater = reactive(initialUpdaterState());
 
 onMounted(async () => {
   try {
@@ -70,6 +76,49 @@ async function quit(): Promise<void> {
   }
 }
 
+const updaterStatusText = computed(() => {
+  switch (updater.stage) {
+    case "idle":
+      return "Нажмите «Проверить», чтобы узнать о новой версии.";
+    case "checking":
+      return "Проверяю обновления…";
+    case "available":
+      return updater.latestVersion
+        ? `Доступна версия ${updater.latestVersion}.`
+        : "Доступна новая версия.";
+    case "downloading":
+      return updater.progress != null
+        ? `Загрузка… ${updater.progress}%`
+        : "Загрузка…";
+    case "installing":
+      return "Установка… приложение перезапустится.";
+    case "ready":
+      return "Обновление установлено.";
+    case "up-to-date":
+      return "Установлена последняя версия.";
+    case "error":
+      return updater.error ?? "Не удалось проверить обновления.";
+  }
+});
+
+async function onCheckUpdates(): Promise<void> {
+  const found = await checkForUpdates(updater);
+  if (found) {
+    appStore.pushLocalToast("info", `Доступна версия ${found}`);
+  } else if (updater.stage === "up-to-date") {
+    appStore.pushLocalToast("info", "Установлена последняя версия");
+  } else if (updater.stage === "error") {
+    appStore.pushLocalToast("error", updater.error ?? "Ошибка проверки обновлений");
+  }
+}
+
+async function onInstallUpdate(): Promise<void> {
+  await downloadAndInstallUpdate(updater);
+  if (updater.stage === "error") {
+    appStore.pushLocalToast("error", updater.error ?? "Ошибка установки обновления");
+  }
+}
+
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleString();
 }
@@ -84,6 +133,35 @@ function formatDate(ms: number): string {
         <p>{{ report?.appVersion ?? "—" }}</p>
         <p class="hint">Tauri / WebView</p>
         <p>{{ report?.tauriVersion ?? "—" }}</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="section-title">Обновления</h2>
+      <p class="hint" data-testid="updater-status">{{ updaterStatusText }}</p>
+      <p v-if="updater.notes" class="notes">{{ updater.notes }}</p>
+      <progress
+        v-if="updater.stage === 'downloading' && updater.progress != null"
+        :value="updater.progress"
+        max="100"
+      />
+      <div class="actions">
+        <button
+          class="btn"
+          title="Проверить наличие новой версии"
+          :disabled="updater.stage === 'checking' || updater.stage === 'downloading' || updater.stage === 'installing'"
+          @click="onCheckUpdates"
+        >
+          Проверить
+        </button>
+        <button
+          v-if="updater.stage === 'available'"
+          class="primary"
+          title="Скачать и установить новую версию"
+          @click="onInstallUpdate"
+        >
+          Установить {{ updater.latestVersion }}
+        </button>
       </div>
     </div>
 
@@ -206,6 +284,17 @@ function formatDate(ms: number): string {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 10px;
+}
+
+.notes {
+  margin-top: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+progress {
+  width: 100%;
+  margin-top: 8px;
 }
 
 .danger-zone button {

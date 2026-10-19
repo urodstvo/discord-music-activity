@@ -2,7 +2,7 @@
 //!
 //! Порядок инициализации:
 //! 1) логирование → 2) настройки → 3) app state → 4) plugins (single
-//! instance, opener, autostart) → 5) окно + tray → 6) supervisor +
+//! instance, opener, autostart, updater) → 5) окно + tray → 6) supervisor +
 //! coordinator → 7) commands. При закрытии окна приложение остаётся в трее
 //! (если closeToTray включен).
 
@@ -64,6 +64,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,

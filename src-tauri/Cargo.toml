@@ -43,6 +43,7 @@ unicode-normalization = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "local-time"] }
 tracing-appender = "0.2"
+tauri-plugin-updater = { version = "2", features = ["rustls-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 # SMTC-сверка для коррекции ложной паузы Ynison: читает реальные
