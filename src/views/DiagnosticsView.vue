@@ -34,6 +34,15 @@ async function openLogs(): Promise<void> {
   }
 }
 
+async function reconnectDiscord(): Promise<void> {
+  try {
+    await appStore.reconnectDiscord();
+    appStore.pushLocalToast("info", "Ищу Discord…");
+  } catch {
+    appStore.pushLocalToast("error", "Не удалось переподключить Discord");
+  }
+}
+
 async function copyReport(): Promise<void> {
   if (!report.value) return;
   const safe = {
@@ -96,6 +105,33 @@ function formatDate(ms: number): string {
         <span class="hint">({{ formatDate(report.lastError.atUnixMs) }})</span>
       </p>
       <p v-else class="hint">Ошибок нет — всё работает.</p>
+    </div>
+
+    <div class="card">
+      <h2 class="section-title">Частые неполадки</h2>
+      <div class="row">
+        <div title="Если Discord был запущен после приложения">
+          <p>Нет связи с Discord?</p>
+          <p class="hint">Например, Discord запустился позже.</p>
+        </div>
+        <button
+          title="Заново найти запущенный Discord"
+          @click="reconnectDiscord"
+        >
+          Найти Discord
+        </button>
+      </div>
+      <div class="row">
+        <div title="Почему другие могут не видеть активность">
+          <p>Друзья не видят активность?</p>
+          <p class="hint">
+            Кнопки видны только чужим, но не тебе. Если не видна и сама
+            активность — проверь в Discord: статус не «Невидимка»,
+            «Конфиденциальность активности» разрешает показ, а смотрят с
+            полного профиля (друг или общий сервер).
+          </p>
+        </div>
+      </div>
     </div>
 
     <div class="card">
