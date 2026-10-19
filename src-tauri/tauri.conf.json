@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "Яндекс Музыка → Discord",
-        "width": 900,
-        "height": 640,
+        "width": 760,
+        "height": 560,
         "minWidth": 760,
         "minHeight": 560,
         "center": true
